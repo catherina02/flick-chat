@@ -72,6 +72,8 @@ class Message(models.Model):
     content_type = models.CharField(max_length=100, blank=True)
     file_name = models.CharField(max_length=255, blank=True)
     file_size = models.PositiveIntegerField(default=0)
+    is_deleted = models.BooleanField(default=False)
+    edited_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     @property

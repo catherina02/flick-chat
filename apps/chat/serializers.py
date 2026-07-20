@@ -50,6 +50,10 @@ class MessageSerializer(serializers.ModelSerializer):
 
             "file_size",
 
+            "is_deleted",
+
+            "edited_at",
+
             "created_at",
 
             "read_by",

@@ -1,10 +1,12 @@
 import mimetypes
 import os
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.db.models import Count
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -14,6 +16,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from apps.accounts.serializers import UserSerializer
 
 from .authentication import QueryParamJWTAuthentication
+from .message_serializers import MessageEditSerializer
 from .models import Conversation, ConversationMember, Message, MessageRead, Notification
 from .realtime import broadcast_conversation_created
 from .serializers import (
@@ -23,11 +26,18 @@ from .serializers import (
     MessageSerializer,
     NotificationSerializer,
 )
-from .services import broadcast_message, notify_group_created
+from .services import (
+    broadcast_conversation_deleted,
+    broadcast_message,
+    broadcast_message_deleted,
+    broadcast_message_updated,
+    notify_group_created,
+)
 
 User = get_user_model()
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+EDIT_WINDOW_MINUTES = 15
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
     "image/png",
@@ -77,6 +87,17 @@ def _detect_message_type(uploaded_file) -> str:
     if content_type.startswith("image/"):
         return Message.IMAGE
     return Message.FILE
+
+
+def _is_conversation_member(user, conversation_id: int) -> bool:
+    return ConversationMember.objects.filter(
+        conversation_id=conversation_id,
+        user=user,
+    ).exists()
+
+
+def _edit_window_expired(message: Message) -> bool:
+    return timezone.now() - message.created_at > timedelta(minutes=EDIT_WINDOW_MINUTES)
 
 
 class UserListView(generics.ListAPIView):
@@ -274,6 +295,96 @@ class MessageAttachmentView(APIView):
             )
 
         return Response({"detail": "No attachment."}, status=status.HTTP_404_NOT_FOUND)
+
+
+class MessageEditView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, message_id):
+        message = get_object_or_404(Message, id=message_id)
+        if not _is_conversation_member(request.user, message.conversation_id):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if message.sender_id != request.user.id:
+            return Response({"detail": "You can only edit your own messages."}, status=status.HTTP_403_FORBIDDEN)
+        if message.is_deleted:
+            return Response({"detail": "Deleted messages cannot be edited."}, status=status.HTTP_400_BAD_REQUEST)
+        if _edit_window_expired(message):
+            return Response(
+                {"detail": f"Messages can only be edited within {EDIT_WINDOW_MINUTES} minutes."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = MessageEditSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message.body = serializer.validated_data["body"]
+        message.edited_at = timezone.now()
+        message.save(update_fields=["body", "edited_at"])
+
+        broadcast_message_updated(message, request=request)
+        return Response(MessageSerializer(message, context={"request": request}).data)
+
+
+class MessageDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, message_id):
+        message = get_object_or_404(Message, id=message_id)
+        if not _is_conversation_member(request.user, message.conversation_id):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if message.sender_id != request.user.id:
+            return Response({"detail": "You can only delete your own messages."}, status=status.HTTP_403_FORBIDDEN)
+        if message.is_deleted:
+            return Response(MessageSerializer(message, context={"request": request}).data)
+
+        message.is_deleted = True
+        message.body = ""
+        message.attachment_data = None
+        message.attachment = None
+        message.file_name = ""
+        message.file_size = 0
+        message.content_type = ""
+        message.save()
+
+        broadcast_message_deleted(message, request=request)
+        return Response(MessageSerializer(message, context={"request": request}).data)
+
+
+class ConversationMediaListView(generics.ListAPIView):
+    serializer_class = MessageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        conversation_id = self.kwargs["conversation_id"]
+        if not _is_conversation_member(self.request.user, conversation_id):
+            return Message.objects.none()
+        return (
+            Message.objects.filter(
+                conversation_id=conversation_id,
+                is_deleted=False,
+                message_type__in=[Message.IMAGE, Message.FILE],
+            )
+            .select_related("sender", "sender__profile")
+            .order_by("-created_at")
+        )
+
+
+class ConversationDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, conversation_id):
+        membership = ConversationMember.objects.filter(
+            conversation_id=conversation_id,
+            user=request.user,
+        ).first()
+        if membership is None:
+            return Response({"detail": "Conversation not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        membership.delete()
+        if not ConversationMember.objects.filter(conversation_id=conversation_id).exists():
+            Conversation.objects.filter(id=conversation_id).delete()
+
+        broadcast_conversation_deleted(request.user.id, conversation_id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class MarkConversationReadView(APIView):

@@ -1,6 +1,10 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  deleteConversation,
+  deleteMessage,
+  editMessage,
+  fetchConversationMedia,
   fetchConversations,
   fetchMe,
   fetchMessages,
@@ -11,6 +15,7 @@ import {
 import type { ChatMessage, Conversation, User } from "../types";
 import { avatarColor, formatDateSeparator, formatMessageTime, initials, isSameDay } from "../utils/ui";
 import { IconAttach, IconBack, IconSend } from "../components/Icons";
+import MediaPanel from "../components/MediaPanel";
 import {
   connectWebSocket,
   joinConversation,
@@ -19,6 +24,8 @@ import {
   sendTyping,
   subscribe,
 } from "../ws";
+
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
 function titleFor(conversation: Conversation | undefined) {
   if (!conversation) return "Chat";
@@ -37,12 +44,43 @@ function subtitleFor(conversation: Conversation | undefined) {
 }
 
 function resolveAttachmentUrl(message: ChatMessage): string | null {
-  if (message.message_type === "text") return null;
+  if (message.is_deleted || message.message_type === "text") return null;
   if (message.attachment_url?.includes("token=")) return message.attachment_url;
   return messageAttachmentUrl(message.id);
 }
 
+function canEditMessage(message: ChatMessage, meId?: number) {
+  if (!meId || message.sender.id !== meId || message.is_deleted) return false;
+  return Date.now() - new Date(message.created_at).getTime() <= EDIT_WINDOW_MS;
+}
+
+function wsMessageFromEvent(event: Record<string, unknown>, conversationId: number): ChatMessage {
+  return {
+    id: event.id as number,
+    conversation: conversationId,
+    sender: {
+      id: event.sender_id as number,
+      username: (event.sender as string) ?? "",
+      email: "",
+      is_online: true,
+    },
+    message_type: (event.message_type as ChatMessage["message_type"]) ?? "text",
+    body: (event.body as string) ?? "",
+    attachment_url: (event.attachment_url as string | null) ?? null,
+    file_name: (event.file_name as string) ?? "",
+    file_size: (event.file_size as number) ?? 0,
+    is_deleted: Boolean(event.is_deleted),
+    edited_at: (event.edited_at as string | null) ?? null,
+    created_at: (event.created_at as string) ?? new Date().toISOString(),
+    read_by: (event.read_by as number[]) ?? [],
+  };
+}
+
 function messageContent(message: ChatMessage) {
+  if (message.is_deleted) {
+    return <span className="bubble-deleted">This message was deleted</span>;
+  }
+
   const url = resolveAttachmentUrl(message);
   if (message.message_type === "image" && url) {
     return (
@@ -64,6 +102,7 @@ function messageContent(message: ChatMessage) {
 }
 
 export default function ChatPage() {
+  const navigate = useNavigate();
   const { id } = useParams();
   const conversationId = Number(id);
   const [me, setMe] = useState<User | null>(null);
@@ -73,9 +112,16 @@ export default function ChatPage() {
   const [typingUser, setTypingUser] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [mediaItems, setMediaItems] = useState<ChatMessage[]>([]);
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [msgMenu, setMsgMenu] = useState<{ messageId: number; x: number; y: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -93,30 +139,24 @@ export default function ChatPage() {
       .finally(() => setLoading(false));
 
     const unsubscribe = subscribe((event) => {
-      if (event.type === "message.new" && event.conversation_id === conversationId) {
+      if (
+        (event.type === "message.new" ||
+          event.type === "message.updated" ||
+          event.type === "message.deleted") &&
+        event.conversation_id === conversationId
+      ) {
+        const incoming = wsMessageFromEvent(event, conversationId);
         setMessages((prev) => {
-          const exists = prev.some((item) => item.id === event.id);
-          if (exists) return prev;
-          return [
-            ...prev,
-            {
-              id: event.id as number,
-              conversation: conversationId,
-              sender: {
-                id: event.sender_id as number,
-                username: event.sender as string,
-                email: "",
-                is_online: true,
-              },
-              message_type: (event.message_type as ChatMessage["message_type"]) ?? "text",
-              body: (event.body as string) ?? "",
-              attachment_url: (event.attachment_url as string | null) ?? null,
-              file_name: (event.file_name as string) ?? "",
-              file_size: (event.file_size as number) ?? 0,
-              created_at: (event.created_at as string) ?? new Date().toISOString(),
-              read_by: (event.read_by as number[]) ?? [],
-            },
-          ];
+          const index = prev.findIndex((item) => item.id === incoming.id);
+          if (index >= 0) {
+            const next = [...prev];
+            next[index] = incoming;
+            return next;
+          }
+          if (event.type === "message.new") {
+            return [...prev, incoming];
+          }
+          return prev;
         });
       }
 
@@ -145,8 +185,19 @@ export default function ChatPage() {
   }, [messages, typingUser]);
 
   useEffect(() => {
-    if (!loading) inputRef.current?.focus();
-  }, [loading, conversationId]);
+    if (!loading && !editingMessage) inputRef.current?.focus();
+  }, [loading, conversationId, editingMessage]);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+      setMsgMenu(null);
+    }
+    document.addEventListener("click", onClickOutside);
+    return () => document.removeEventListener("click", onClickOutside);
+  }, []);
 
   const expectedReaders = useMemo(() => {
     if (!conversation) return 1;
@@ -154,10 +205,70 @@ export default function ChatPage() {
     return count > 0 ? count - 1 : 1;
   }, [conversation]);
 
-  function onSubmit(event: FormEvent) {
+  async function openMediaPanel() {
+    setMenuOpen(false);
+    setMediaOpen(true);
+    setMediaLoading(true);
+    try {
+      const items = await fetchConversationMedia(conversationId);
+      setMediaItems(items);
+    } catch {
+      setMediaItems([]);
+    } finally {
+      setMediaLoading(false);
+    }
+  }
+
+  async function handleDeleteChat() {
+    setMenuOpen(false);
+    if (!window.confirm("Delete this chat? It will be removed from your chat list.")) return;
+    try {
+      await deleteConversation(conversationId);
+      navigate("/");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to delete chat");
+    }
+  }
+
+  function startEdit(message: ChatMessage) {
+    setMsgMenu(null);
+    setEditingMessage(message);
+    setText(message.body);
+    inputRef.current?.focus();
+  }
+
+  function cancelEdit() {
+    setEditingMessage(null);
+    setText("");
+  }
+
+  async function handleDeleteMessage(messageId: number) {
+    setMsgMenu(null);
+    if (!window.confirm("Delete this message for everyone?")) return;
+    try {
+      const updated = await deleteMessage(messageId);
+      setMessages((prev) => prev.map((m) => (m.id === messageId ? updated : m)));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to delete message");
+    }
+  }
+
+  async function onSubmit(event: FormEvent) {
     event.preventDefault();
     const body = text.trim();
     if (!body) return;
+
+    if (editingMessage) {
+      try {
+        const updated = await editMessage(editingMessage.id, body);
+        setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+        cancelEdit();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "Failed to edit message");
+      }
+      return;
+    }
+
     sendTyping(conversationId, false);
     sendChatMessage(conversationId, body);
     setText("");
@@ -182,6 +293,10 @@ export default function ChatPage() {
     conversation?.type === "group"
       ? conversation.name || String(conversation.id)
       : conversation?.other_user?.username ?? chatTitle;
+
+  const activeMenuMessage = msgMenu
+    ? messages.find((m) => m.id === msgMenu.messageId)
+    : null;
 
   return (
     <div className="chat-room">
@@ -211,6 +326,29 @@ export default function ChatPage() {
             <p>{subtitleFor(conversation)}</p>
           )}
         </div>
+        <div className="chat-topbar-menu" ref={menuRef}>
+          <button
+            className="btn icon-btn ghost"
+            type="button"
+            aria-label="Chat menu"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen((v) => !v);
+            }}
+          >
+            ⋮
+          </button>
+          {menuOpen ? (
+            <div className="dropdown-menu">
+              <button type="button" onClick={openMediaPanel}>
+                Media, links & docs
+              </button>
+              <button type="button" className="danger" onClick={handleDeleteChat}>
+                Delete chat
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="messages">
@@ -232,20 +370,22 @@ export default function ChatPage() {
             const isMe = message.sender.id === me?.id;
             const prev = messages[index - 1];
             const next = messages[index + 1];
-            const showDate =
-              !prev || !isSameDay(prev.created_at, message.created_at);
+            const showDate = !prev || !isSameDay(prev.created_at, message.created_at);
             const isGrouped =
               prev &&
               prev.sender.id === message.sender.id &&
-              isSameDay(prev.created_at, message.created_at);
+              isSameDay(prev.created_at, message.created_at) &&
+              !prev.is_deleted &&
+              !message.is_deleted;
             const nextGrouped =
               next &&
               next.sender.id === message.sender.id &&
-              isSameDay(next.created_at, message.created_at);
+              isSameDay(next.created_at, message.created_at) &&
+              !next.is_deleted &&
+              !message.is_deleted;
             const isRead = isMe && message.read_by.length >= expectedReaders;
-            const receipt = isMe ? (isRead ? "✓✓" : "✓") : "";
-            const showSender =
-              !isMe && conversation?.type === "group" && !isGrouped;
+            const receipt = isMe && !message.is_deleted ? (isRead ? "✓✓" : "✓") : "";
+            const showSender = !isMe && conversation?.type === "group" && !isGrouped;
 
             return (
               <div key={message.id}>
@@ -259,12 +399,36 @@ export default function ChatPage() {
                     {showSender ? (
                       <p className="sender-name">{message.sender.username}</p>
                     ) : null}
-                    <div className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""}`}>
+                    <div
+                      className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""} ${message.is_deleted ? "deleted" : ""}`}
+                      onContextMenu={(e) => {
+                        if (!isMe || message.is_deleted) return;
+                        e.preventDefault();
+                        setMsgMenu({ messageId: message.id, x: e.clientX, y: e.clientY });
+                      }}
+                    >
                       {messageContent(message)}
-                      <span className="bubble-meta">
-                        {formatMessageTime(message.created_at)}
-                        {receipt ? <span className="receipt">{receipt}</span> : null}
-                      </span>
+                      {!message.is_deleted ? (
+                        <span className="bubble-meta">
+                          {message.edited_at ? <span className="edited-label">edited </span> : null}
+                          {formatMessageTime(message.created_at)}
+                          {receipt ? <span className="receipt">{receipt}</span> : null}
+                        </span>
+                      ) : null}
+                      {isMe && !message.is_deleted ? (
+                        <button
+                          type="button"
+                          className="bubble-menu-btn"
+                          aria-label="Message options"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                            setMsgMenu({ messageId: message.id, x: rect.left, y: rect.bottom + 4 });
+                          }}
+                        >
+                          ▾
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -275,6 +439,33 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
+      {msgMenu && activeMenuMessage ? (
+        <div
+          className="msg-context-menu"
+          style={{ top: msgMenu.y, left: msgMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {canEditMessage(activeMenuMessage, me?.id) &&
+          (activeMenuMessage.message_type === "text" || activeMenuMessage.body) ? (
+            <button type="button" onClick={() => startEdit(activeMenuMessage)}>
+              Edit
+            </button>
+          ) : null}
+          <button type="button" className="danger" onClick={() => handleDeleteMessage(activeMenuMessage.id)}>
+            Delete
+          </button>
+        </div>
+      ) : null}
+
+      {editingMessage ? (
+        <div className="edit-banner">
+          <span>Editing message</span>
+          <button type="button" className="btn ghost" onClick={cancelEdit}>
+            Cancel
+          </button>
+        </div>
+      ) : null}
+
       <form className="composer" onSubmit={onSubmit}>
         <input
           ref={fileInputRef}
@@ -283,15 +474,17 @@ export default function ChatPage() {
           accept="image/*,.pdf,.txt,.zip,.doc,.docx"
           onChange={onFileSelected}
         />
-        <button
-          className="attach-btn"
-          type="button"
-          disabled={uploading || loading}
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach file"
-        >
-          <IconAttach />
-        </button>
+        {!editingMessage ? (
+          <button
+            className="attach-btn"
+            type="button"
+            disabled={uploading || loading}
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach file"
+          >
+            <IconAttach />
+          </button>
+        ) : null}
         <div className="composer-input-wrap">
           <input
             ref={inputRef}
@@ -299,16 +492,30 @@ export default function ChatPage() {
             value={text}
             onChange={(e) => {
               setText(e.target.value);
-              sendTyping(conversationId, e.target.value.trim().length > 0);
+              if (!editingMessage) {
+                sendTyping(conversationId, e.target.value.trim().length > 0);
+              }
             }}
-            placeholder="Type a message"
+            placeholder={editingMessage ? "Edit your message" : "Type a message"}
             disabled={loading}
           />
         </div>
-        <button className="send-btn" type="submit" disabled={!text.trim() || loading} aria-label="Send">
-          <IconSend />
+        <button
+          className="send-btn"
+          type="submit"
+          disabled={!text.trim() || loading}
+          aria-label={editingMessage ? "Save edit" : "Send"}
+        >
+          {editingMessage ? "✓" : <IconSend />}
         </button>
       </form>
+
+      <MediaPanel
+        open={mediaOpen}
+        onClose={() => setMediaOpen(false)}
+        items={mediaItems}
+        loading={mediaLoading}
+      />
     </div>
   );
 }

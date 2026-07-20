@@ -1,11 +1,15 @@
 from django.urls import path
 
 from .views import (
+    ConversationDeleteView,
     ConversationListView,
+    ConversationMediaListView,
     DirectConversationCreateView,
     GroupConversationCreateView,
     MarkConversationReadView,
     MessageAttachmentView,
+    MessageDeleteView,
+    MessageEditView,
     MessageListView,
     MessageUploadView,
     NotificationListView,
@@ -34,6 +38,16 @@ urlpatterns = [
         name="chat-messages",
     ),
     path(
+        "conversations/<int:conversation_id>/media/",
+        ConversationMediaListView.as_view(),
+        name="chat-media",
+    ),
+    path(
+        "conversations/<int:conversation_id>/",
+        ConversationDeleteView.as_view(),
+        name="chat-conversation-delete",
+    ),
+    path(
         "conversations/<int:conversation_id>/upload/",
         MessageUploadView.as_view(),
         name="chat-upload",
@@ -42,6 +56,16 @@ urlpatterns = [
         "messages/<int:message_id>/attachment/",
         MessageAttachmentView.as_view(),
         name="chat-message-attachment",
+    ),
+    path(
+        "messages/<int:message_id>/",
+        MessageEditView.as_view(),
+        name="chat-message-edit",
+    ),
+    path(
+        "messages/<int:message_id>/delete/",
+        MessageDeleteView.as_view(),
+        name="chat-message-delete",
     ),
     path(
         "conversations/<int:conversation_id>/read/",

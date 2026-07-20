@@ -162,6 +162,34 @@ export async function fetchMessages(conversationId: number) {
   return response.json();
 }
 
+export async function fetchConversationMedia(conversationId: number) {
+  const response = await authorizedFetch(
+    `/api/v1/chat/conversations/${conversationId}/media/`,
+  );
+  return response.json();
+}
+
+export async function editMessage(messageId: number, body: string) {
+  const response = await authorizedFetch(`/api/v1/chat/messages/${messageId}/`, {
+    method: "PATCH",
+    body: JSON.stringify({ body }),
+  });
+  return response.json();
+}
+
+export async function deleteMessage(messageId: number) {
+  const response = await authorizedFetch(`/api/v1/chat/messages/${messageId}/delete/`, {
+    method: "DELETE",
+  });
+  return response.json();
+}
+
+export async function deleteConversation(conversationId: number) {
+  await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/`, {
+    method: "DELETE",
+  });
+}
+
 export async function markConversationRead(conversationId: number) {
   await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/read/`, {
     method: "POST",

@@ -32,6 +32,7 @@ function titleFor(conversation: Conversation) {
 function previewFor(conversation: Conversation, meId?: number) {
   const message = conversation.last_message;
   if (!message) return "No messages yet";
+  if (message.is_deleted) return "This message was deleted";
   const prefix = message.sender.id === meId ? "You: " : "";
   if (message.message_type === "image") return `${prefix}📷 Photo`;
   if (message.message_type === "file") return `${prefix}📎 ${message.file_name || "File"}`;
@@ -138,6 +139,8 @@ export default function MessengerLayout() {
             attachment_url: (event.attachment_url as string | null) ?? null,
             file_name: (event.file_name as string) ?? "",
             file_size: (event.file_size as number) ?? 0,
+            is_deleted: Boolean(event.is_deleted),
+            edited_at: (event.edited_at as string | null) ?? null,
             created_at: (event.created_at as string) ?? new Date().toISOString(),
             read_by: (event.read_by as number[]) ?? [],
           };
@@ -145,6 +148,34 @@ export default function MessengerLayout() {
           const rest = prev.filter((item) => item.id !== conversationId);
           return [updated, ...rest];
         });
+      }
+
+      if (
+        (event.type === "message.updated" || event.type === "message.deleted") &&
+        event.conversation_id
+      ) {
+        const conversationId = event.conversation_id as number;
+        setConversations((prev) =>
+          prev.map((item) => {
+            if (item.id !== conversationId || !item.last_message) return item;
+            if (item.last_message.id !== event.id) return item;
+            return {
+              ...item,
+              last_message: {
+                ...item.last_message,
+                body: (event.body as string) ?? "",
+                is_deleted: Boolean(event.is_deleted),
+                edited_at: (event.edited_at as string | null) ?? null,
+              },
+            };
+          }),
+        );
+      }
+
+      if (event.type === "conversation.deleted" && event.conversation_id) {
+        setConversations((prev) =>
+          prev.filter((item) => item.id !== (event.conversation_id as number)),
+        );
       }
 
       if (event.type === "notification.new" && event.notification) {
