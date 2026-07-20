@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { login, register } from "../api";
 
 const DEMO_ACCOUNTS = [
-  { label: "Alice", email: "alice@demo.com" },
-  { label: "Bob", email: "bob@demo.com" },
-  { label: "Charlie", email: "charlie@demo.com" },
+  { label: "Alice", email: "alice@demo.com", color: "#6366f1" },
+  { label: "Bob", email: "bob@demo.com", color: "#0ea5e9" },
+  { label: "Charlie", email: "charlie@demo.com", color: "#14b8a6" },
 ];
 const DEMO_PASSWORD = "DemoPass123!";
 
@@ -54,7 +54,9 @@ export default function LoginPage() {
           <div className="auth-logo">FC</div>
           <div>
             <h1>Flick Chat</h1>
-            <p style={{ margin: 0 }}>{mode === "login" ? "Welcome back" : "Create your account"}</p>
+            <p className="auth-tagline">
+              {mode === "login" ? "Sign in to continue messaging" : "Create your account"}
+            </p>
           </div>
         </div>
 
@@ -103,29 +105,36 @@ export default function LoginPage() {
         <button
           className="btn secondary"
           type="button"
-          style={{ width: "100%", marginTop: 12 }}
-          onClick={() => setMode(mode === "login" ? "register" : "login")}
+          style={{ width: "100%", marginTop: 14 }}
+          onClick={() => {
+            setMode(mode === "login" ? "register" : "login");
+            setError(null);
+          }}
         >
           {mode === "login" ? "Need an account? Register" : "Already have an account? Sign in"}
         </button>
 
         {mode === "login" ? (
-          <div className="demo-box">
-            <p>Try a demo account</p>
-            <div className="demo-buttons">
-              {DEMO_ACCOUNTS.map((account) => (
-                <button
-                  key={account.email}
-                  className="btn secondary"
-                  type="button"
-                  disabled={loading}
-                  onClick={() => quickLogin(account.email)}
-                >
-                  {account.label}
-                </button>
-              ))}
+          <>
+            <div className="divider">or try a demo</div>
+            <div className="demo-box">
+              <p>Quick login — no signup needed</p>
+              <div className="demo-buttons">
+                {DEMO_ACCOUNTS.map((account) => (
+                  <button
+                    key={account.email}
+                    className="btn secondary"
+                    type="button"
+                    disabled={loading}
+                    onClick={() => quickLogin(account.email)}
+                    style={{ borderColor: account.color, color: account.color }}
+                  >
+                    {account.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          </>
         ) : null}
       </div>
     </div>

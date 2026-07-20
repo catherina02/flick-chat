@@ -14,18 +14,28 @@ import {
 import type { AppNotification, ChatMessage, Conversation, User } from "../types";
 import { avatarColor, formatListTime, initials } from "../utils/ui";
 import { connectWebSocket, disconnectWebSocket, joinConversation, subscribe } from "../ws";
+import {
+  IconBell,
+  IconChat,
+  IconEdit,
+  IconGroup,
+  IconLogout,
+  IconSearch,
+  IconUsers,
+} from "./Icons";
 
 function titleFor(conversation: Conversation) {
   if (conversation.type === "group") return conversation.name || "Group Chat";
   return conversation.other_user?.username ?? "Chat";
 }
 
-function previewFor(conversation: Conversation) {
+function previewFor(conversation: Conversation, meId?: number) {
   const message = conversation.last_message;
   if (!message) return "No messages yet";
-  if (message.message_type === "image") return "📷 Image";
-  if (message.message_type === "file") return `📎 ${message.file_name || "File"}`;
-  return message.body;
+  const prefix = message.sender.id === meId ? "You: " : "";
+  if (message.message_type === "image") return `${prefix}📷 Photo`;
+  if (message.message_type === "file") return `${prefix}📎 ${message.file_name || "File"}`;
+  return `${prefix}${message.body}`;
 }
 
 function avatarSeed(conversation: Conversation) {
@@ -33,12 +43,30 @@ function avatarSeed(conversation: Conversation) {
   return conversation.other_user?.username ?? String(conversation.id);
 }
 
+function ConversationSkeleton() {
+  return (
+    <>
+      {[1, 2, 3, 4].map((i) => (
+        <div key={i} className="skeleton-item">
+          <div className="skeleton skeleton-avatar" />
+          <div className="skeleton-lines">
+            <div className="skeleton skeleton-line" />
+            <div className="skeleton skeleton-line short" />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function ChatEmptyState() {
   return (
-    <div className="empty-state">
-      <div className="empty-state-icon">💬</div>
-      <h2>Flick Chat</h2>
-      <p>Select a conversation or start a new chat</p>
+    <div className="empty-state fade-in">
+      <div className="empty-state-icon">
+        <IconChat size={36} />
+      </div>
+      <h2>Flick Chat for Web</h2>
+      <p>Send and receive messages without keeping your phone online.<br />Select a chat to start messaging.</p>
     </div>
   );
 }
@@ -56,6 +84,7 @@ export default function MessengerLayout() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [search, setSearch] = useState("");
@@ -76,7 +105,8 @@ export default function MessengerLayout() {
         setUnreadCount(unread.count);
         chats.forEach((c: Conversation) => joinConversation(c.id));
       })
-      .catch((err) => setError(err.message));
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
 
     const unsubscribe = subscribe((event) => {
       if (event.type === "conversation.created" && event.conversation) {
@@ -159,7 +189,9 @@ export default function MessengerLayout() {
               <div className="avatar sm" style={{ background: avatarColor(me.username) }}>
                 {initials(me.username)}
               </div>
-            ) : null}
+            ) : (
+              <div className="avatar sm skeleton" />
+            )}
             <div>
               <h1>Chats</h1>
               {me ? <p className="sidebar-subtitle">{me.username}</p> : null}
@@ -172,7 +204,7 @@ export default function MessengerLayout() {
               onClick={openNotifications}
               title="Notifications"
             >
-              🔔
+              <IconBell />
               {unreadCount > 0 ? <span className="badge">{unreadCount}</span> : null}
             </button>
             <button
@@ -184,10 +216,10 @@ export default function MessengerLayout() {
               }}
               title="New chat"
             >
-              ✏️
+              <IconEdit />
             </button>
             <Link className="btn icon-btn ghost" to="/create-group" title="New group">
-              👥
+              <IconUsers />
             </Link>
             <button
               className="btn icon-btn ghost"
@@ -198,24 +230,24 @@ export default function MessengerLayout() {
                 navigate("/login");
               }}
             >
-              ⎋
+              <IconLogout />
             </button>
           </div>
         </div>
 
         <div className="sidebar-toolbar">
           <div className="search-box">
-            <span>🔍</span>
+            <span className="search-icon"><IconSearch size={16} /></span>
             <input
               type="search"
-              placeholder="Search chats"
+              placeholder="Search or start new chat"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
         </div>
 
-        {error ? <div className="error" style={{ margin: "0 16px 12px" }}>{error}</div> : null}
+        {error ? <div className="error" style={{ margin: "0 14px 10px" }}>{error}</div> : null}
 
         {showNotifications ? (
           <div className="notifications-panel">
@@ -224,6 +256,7 @@ export default function MessengerLayout() {
               <button
                 className="btn ghost"
                 type="button"
+                style={{ fontSize: "0.8125rem", padding: "6px 10px" }}
                 onClick={async () => {
                   await markAllNotificationsRead();
                   setNotifications((prev) => prev.map((item) => ({ ...item, is_read: true })));
@@ -270,7 +303,7 @@ export default function MessengerLayout() {
 
         {showNew ? (
           <div className="overlay-panel">
-            <h3>Start a conversation</h3>
+            <h3>New conversation</h3>
             <div className="user-pick-list">
               {users
                 .filter((user) => user.id !== me?.id)
@@ -286,6 +319,7 @@ export default function MessengerLayout() {
                       {user.is_online ? <span className="online-dot" /> : null}
                     </div>
                     <span>{user.username}</span>
+                    {user.is_online ? <span className="meta" style={{ marginLeft: "auto" }}>online</span> : null}
                   </button>
                 ))}
             </div>
@@ -293,15 +327,26 @@ export default function MessengerLayout() {
         ) : null}
 
         <div className="conversation-list">
-          {filteredConversations.length === 0 ? (
+          {loading ? (
+            <ConversationSkeleton />
+          ) : filteredConversations.length === 0 ? (
             <div className="empty-state">
-              <p>{search ? "No chats match your search" : "No conversations yet"}</p>
+              <p>{search ? "No chats match your search" : "No conversations yet — start a new chat!"}</p>
+              {!search ? (
+                <div className="empty-state-actions">
+                  <button className="btn secondary" type="button" onClick={() => setShowNew(true)}>
+                    New chat
+                  </button>
+                  <Link className="btn" to="/create-group">New group</Link>
+                </div>
+              ) : null}
             </div>
           ) : (
             filteredConversations.map((conversation) => {
               const seed = avatarSeed(conversation);
               const isOnline =
                 conversation.type === "direct" && conversation.other_user?.is_online;
+              const isGroup = conversation.type === "group";
               return (
                 <Link
                   key={conversation.id}
@@ -314,12 +359,19 @@ export default function MessengerLayout() {
                   </div>
                   <div className="conversation-body">
                     <div className="conversation-top">
-                      <strong>{titleFor(conversation)}</strong>
+                      <strong>
+                        {titleFor(conversation)}
+                        {isGroup ? (
+                          <span className="group-badge"><IconGroup /></span>
+                        ) : null}
+                      </strong>
                       <span className="conversation-time">
                         {formatListTime(conversation.last_message?.created_at ?? conversation.updated_at)}
                       </span>
                     </div>
-                    <div className="conversation-preview">{previewFor(conversation)}</div>
+                    <div className="conversation-preview">
+                      {previewFor(conversation, me?.id)}
+                    </div>
                   </div>
                 </Link>
               );

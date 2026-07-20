@@ -72,21 +72,22 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def get_attachment_url(self, obj):
 
-        if not obj.attachment:
-
+        if not obj.has_attachment:
             return None
 
-        request = self.context.get("request")
-
-        url = obj.attachment.url
-
-        if request is not None:
-
-            return request.build_absolute_uri(url)
-
         from django.conf import settings
+        from django.urls import reverse
 
-        return f"{settings.SITE_URL.rstrip('/')}{url}"
+        path = reverse("chat-message-attachment", kwargs={"message_id": obj.id})
+        request = self.context.get("request")
+        if request is not None:
+            url = request.build_absolute_uri(path)
+            auth = request.META.get("HTTP_AUTHORIZATION", "")
+            if auth.startswith("Bearer "):
+                url = f"{url}?token={auth[7:]}"
+            return url
+
+        return f"{settings.SITE_URL.rstrip('/')}{path}"
 
 
 

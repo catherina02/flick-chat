@@ -160,14 +160,16 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     }
   }
 
-  Widget _messageBody(ChatMessage message, bool isMe) {
-    if (message.isImage && message.attachmentUrl != null) {
+  Widget _messageBody(ChatMessage message, bool isMe, ChatService chatService) {
+    final attachmentUrl = chatService.attachmentUrlFor(message);
+
+    if (message.isImage && attachmentUrl.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
-          onTap: () => _openUrl(message.attachmentUrl!),
+          onTap: () => _openUrl(attachmentUrl),
           child: Image.network(
-            message.attachmentUrl!,
+            attachmentUrl,
             fit: BoxFit.cover,
             errorBuilder: (_, __, ___) => Text(message.fileName),
           ),
@@ -175,9 +177,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       );
     }
 
-    if (message.isFile && message.attachmentUrl != null) {
+    if (message.isFile && attachmentUrl.isNotEmpty) {
       return InkWell(
-        onTap: () => _openUrl(message.attachmentUrl!),
+        onTap: () => _openUrl(attachmentUrl),
         child: Text(
           '📎 ${message.fileName.isNotEmpty ? message.fileName : 'Download file'}',
           style: TextStyle(
@@ -325,7 +327,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                                               color: const Color(0xFFE2E8F0),
                                             ),
                                           ),
-                                          child: _messageBody(message, isMe),
+                                          child: _messageBody(message, isMe, chatService),
                                         ),
                                         const SizedBox(height: 4),
                                         Row(

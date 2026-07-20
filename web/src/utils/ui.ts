@@ -33,5 +33,37 @@ export function formatListTime(iso: string | undefined): string {
   if (sameDay) {
     return formatMessageTime(iso);
   }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday =
+    date.getDate() === yesterday.getDate() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getFullYear() === yesterday.getFullYear();
+  if (isYesterday) return "Yesterday";
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+export function isSameDay(a: string, b: string): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getDate() === db.getDate() &&
+    da.getMonth() === db.getMonth() &&
+    da.getFullYear() === db.getFullYear()
+  );
+}
+
+export function formatDateSeparator(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  if (isSameDay(iso, now.toISOString())) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (isSameDay(iso, yesterday.toISOString())) return "Yesterday";
+  return date.toLocaleDateString([], {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+  });
 }

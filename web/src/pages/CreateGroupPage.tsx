@@ -1,14 +1,16 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { createGroupChat, fetchUsers } from "../api";
 import type { User } from "../types";
 import { avatarColor, initials } from "../utils/ui";
+import { IconBack } from "../components/Icons";
 
 export default function CreateGroupPage() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [users, setUsers] = useState<User[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
+  const [memberSearch, setMemberSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -17,6 +19,12 @@ export default function CreateGroupPage() {
       .then(setUsers)
       .catch((err) => setError(err.message));
   }, []);
+
+  const filteredUsers = useMemo(() => {
+    const q = memberSearch.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => u.username.toLowerCase().includes(q));
+  }, [users, memberSearch]);
 
   function toggleUser(userId: number) {
     setSelected((prev) =>
@@ -52,10 +60,10 @@ export default function CreateGroupPage() {
     <div className="page-panel">
       <div className="page-card">
         <Link to="/" className="back-link">
-          ← Back to chats
+          <IconBack size={16} /> Back to chats
         </Link>
         <h1>Create Group</h1>
-        <p>Add a name and pick at least 2 members.</p>
+        <p>Add a name and pick at least 2 members to get started.</p>
 
         <form className="group-form" onSubmit={onSubmit}>
           <label>
@@ -64,24 +72,43 @@ export default function CreateGroupPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Study group, project team..."
+              autoFocus
             />
           </label>
 
           <div>
-            <strong>Select members ({selected.length} selected, min 2)</strong>
+            <div className="member-section-header">
+              <strong>Add members</strong>
+              <span className="member-count">{selected.length} selected</span>
+            </div>
+            <div className="search-box" style={{ marginBottom: 10 }}>
+              <input
+                type="search"
+                placeholder="Search members..."
+                value={memberSearch}
+                onChange={(e) => setMemberSearch(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  border: "1.5px solid var(--border)",
+                  borderRadius: 10,
+                  background: "#f8fafc",
+                }}
+              />
+            </div>
             <div className="member-list">
-              {users.map((user) => (
+              {filteredUsers.map((user) => (
                 <label key={user.id} className="member-item">
-                  <div className="avatar sm" style={{ background: avatarColor(user.username) }}>
+                  <div className="avatar sm light-border" style={{ background: avatarColor(user.username) }}>
                     {initials(user.username)}
-                    {user.is_online ? <span className="online-dot" /> : null}
+                    {user.is_online ? <span className="online-dot" style={{ borderColor: "#fff" }} /> : null}
                   </div>
                   <input
                     type="checkbox"
                     checked={selected.includes(user.id)}
                     onChange={() => toggleUser(user.id)}
                   />
-                  <span>{user.username}</span>
+                  <span className="name">{user.username}</span>
                   <span className="meta">{user.is_online ? "Online" : "Offline"}</span>
                 </label>
               ))}
@@ -90,7 +117,7 @@ export default function CreateGroupPage() {
 
           {error ? <div className="error">{error}</div> : null}
 
-          <button className="btn" type="submit" disabled={loading}>
+          <button className="btn" type="submit" disabled={loading || selected.length < 2 || !name.trim()}>
             {loading ? "Creating..." : "Create Group"}
           </button>
         </form>

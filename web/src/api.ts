@@ -9,6 +9,13 @@ export function getAccessToken() {
   return localStorage.getItem(ACCESS_KEY);
 }
 
+/** Build authenticated URL for a message attachment stored in the database. */
+export function messageAttachmentUrl(messageId: number): string {
+  const token = getAccessToken();
+  const base = `${API_BASE}/api/v1/chat/messages/${messageId}/attachment/`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
 export function getRefreshToken() {
   return localStorage.getItem(REFRESH_KEY);
 }
