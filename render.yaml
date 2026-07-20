@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: flick-chat-api
+    runtime: python
+    plan: free
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: daphne -b 0.0.0.0 -p $PORT config.asgi:application
+    healthCheckPath: /admin/login/
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.prod
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: DB_SSL_REQUIRE
+        value: "True"
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: SITE_URL
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: flick-chat-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: FCM_SERVER_KEY
+        sync: false
+
+databases:
+  - name: flick-chat-db
+    plan: free
+
