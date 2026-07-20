@@ -1,6 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import MessengerLayout, { ChatEmptyState } from "./components/MessengerLayout";
 import LoginPage from "./pages/LoginPage";
-import ChatsPage from "./pages/ChatsPage";
 import ChatPage from "./pages/ChatPage";
 import CreateGroupPage from "./pages/CreateGroupPage";
 import { getAccessToken } from "./api";
@@ -18,14 +18,6 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
-          path="/"
-          element={
-            <RequireAuth>
-              <ChatsPage />
-            </RequireAuth>
-          }
-        />
-        <Route
           path="/create-group"
           element={
             <RequireAuth>
@@ -34,13 +26,15 @@ export default function App() {
           }
         />
         <Route
-          path="/chat/:id"
           element={
             <RequireAuth>
-              <ChatPage />
+              <MessengerLayout />
             </RequireAuth>
           }
-        />
+        >
+          <Route path="/" element={<ChatEmptyState />} />
+          <Route path="/chat/:id" element={<ChatPage />} />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>
