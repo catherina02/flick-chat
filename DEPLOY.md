@@ -35,8 +35,8 @@ git push -u origin main
 |----------|---------------|
 | `ALLOWED_HOSTS` | `flick-chat-api.onrender.com` |
 | `SITE_URL` | `https://flick-chat-api.onrender.com` |
-| `CSRF_TRUSTED_ORIGINS` | `https://web-rust-chi-91.vercel.app` |
-| `CORS_ALLOWED_ORIGINS` | `https://web-rust-chi-91.vercel.app` |
+| `CSRF_TRUSTED_ORIGINS` | `https://flick-chat.vercel.app` |
+| `CORS_ALLOWED_ORIGINS` | `https://flick-chat.vercel.app,http://localhost:5173` |
 
 5. Optional: add a Render Redis instance and set `REDIS_URL` for multi-instance WebSockets.
 
@@ -55,11 +55,19 @@ Attach a Postgres database and set `DATABASE_URL` (Render provides this automati
 
 ## 2. Deploy web app on Vercel
 
-**Status:** Web app is deployed at **https://web-rust-chi-91.vercel.app**
+**Status:** Web app should be deployed at **https://flick-chat.vercel.app**
+
+### Vercel project name (clean URL)
+
+1. Open [Vercel Dashboard](https://vercel.com/dashboard) → your Flick Chat project
+2. **Settings → General → Project Name** → set to `flick-chat`
+3. **Settings → Domains** → confirm `flick-chat.vercel.app` is the **Production** domain
+
+If `flick-chat.vercel.app` is already used by another Vercel project, delete or rename that project first, then assign the name to this repo.
 
 If redeploying or setting env vars:
 
-1. Open [Vercel Dashboard](https://vercel.com/catherina02s-projects/web)
+1. Open your project in the Vercel dashboard
 2. **Settings → Environment Variables** — add:
 
 | Variable | Value |

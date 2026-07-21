@@ -74,7 +74,7 @@ Web app env (`web/.env`):
 - Set `DJANGO_SETTINGS_MODULE=config.settings.prod`
 - Add Redis and set `REDIS_URL` for production WebSockets
 
-**Vercel (web)** — live at https://web-rust-chi-91.vercel.app
+**Vercel (web)** — live at https://flick-chat.vercel.app
 
 After Render backend is deployed, set in Vercel project settings:
 - `VITE_API_URL` = your Render URL
