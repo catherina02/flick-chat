@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 
+from apps.accounts.models import Profile
+
 User = get_user_model()
 
 DEMO_PASSWORD = "DemoPass123!"
@@ -23,6 +25,7 @@ class Command(BaseCommand):
                 email=entry["email"],
                 defaults={"username": entry["username"]},
             )
+            Profile.objects.get_or_create(user=user)
             if created:
                 user.set_password(DEMO_PASSWORD)
                 user.save()

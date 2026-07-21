@@ -6,6 +6,13 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import Profile, DeviceToken
 
 
+def _user_profile(user):
+    try:
+        return user.profile
+    except Profile.DoesNotExist:
+        return None
+
+
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
@@ -70,15 +77,15 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ("id", "username", "email", "is_online", "presence_status", "status_message")
 
     def get_is_online(self, obj):
-        profile = getattr(obj, "profile", None)
+        profile = _user_profile(obj)
         return profile.is_online if profile else False
 
     def get_presence_status(self, obj):
-        profile = getattr(obj, "profile", None)
+        profile = _user_profile(obj)
         return profile.presence_status if profile else "online"
 
     def get_status_message(self, obj):
-        profile = getattr(obj, "profile", None)
+        profile = _user_profile(obj)
         return profile.status_message if profile else ""
 
 

@@ -52,6 +52,25 @@ export function getRefreshToken() {
   return localStorage.getItem(REFRESH_KEY);
 }
 
+function parseApiError(text: string, status: number): string {
+  const trimmed = text.trim();
+  if (!trimmed) return `Request failed (${status}).`;
+  if (trimmed.startsWith("<!") || trimmed.includes("<html")) {
+    if (status >= 500) {
+      return "Server error — the API may still be deploying. Wait a minute and refresh, or check Render logs.";
+    }
+    return `Request failed (${status}). Please try again.`;
+  }
+  try {
+    const json = JSON.parse(trimmed) as { detail?: string; message?: string };
+    if (typeof json.detail === "string") return json.detail;
+    if (typeof json.message === "string") return json.message;
+  } catch {
+    // plain text error body
+  }
+  return trimmed.length > 180 ? `${trimmed.slice(0, 180)}…` : trimmed;
+}
+
 export function setTokens(tokens: TokenPair) {
   localStorage.setItem(ACCESS_KEY, tokens.access);
   localStorage.setItem(REFRESH_KEY, tokens.refresh);
@@ -101,7 +120,7 @@ async function authorizedFetch(path: string, init: RequestInit = {}) {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(parseApiError(text, response.status));
   }
 
   return response;

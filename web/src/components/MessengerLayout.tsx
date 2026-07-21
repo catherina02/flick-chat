@@ -106,23 +106,34 @@ export default function MessengerLayout() {
 
   useEffect(() => {
     connectWebSocket();
-    Promise.all([
+    void Promise.allSettled([
       fetchMe(),
       fetchConversations(),
       fetchUsers(),
       fetchUnreadNotificationCount(),
-      fetchPublicChannels().catch(() => []),
-    ])
-      .then(([profile, chats, allUsers, unread, pubChannels]) => {
-        setMe(profile);
-        setConversations(chats);
-        setUsers(allUsers);
-        setUnreadCount(unread.count);
-        setPublicChannels(pubChannels);
-        chats.forEach((c: Conversation) => joinConversation(c.id));
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      fetchPublicChannels(),
+    ]).then(([meResult, chatsResult, usersResult, unreadResult, channelsResult]) => {
+      if (meResult.status === "fulfilled") {
+        setMe(meResult.value);
+      } else {
+        setError(meResult.reason instanceof Error ? meResult.reason.message : "Failed to load profile.");
+      }
+
+      if (chatsResult.status === "fulfilled") {
+        setConversations(chatsResult.value);
+        chatsResult.value.forEach((c: Conversation) => joinConversation(c.id));
+      } else {
+        setError(
+          chatsResult.reason instanceof Error
+            ? chatsResult.reason.message
+            : "Failed to load conversations.",
+        );
+      }
+
+      if (usersResult.status === "fulfilled") setUsers(usersResult.value);
+      if (unreadResult.status === "fulfilled") setUnreadCount(unreadResult.value.count);
+      if (channelsResult.status === "fulfilled") setPublicChannels(channelsResult.value);
+    }).finally(() => setLoading(false));
 
     const unsubscribe = subscribe((event) => {
       if (event.type === "conversation.created" && event.conversation) {

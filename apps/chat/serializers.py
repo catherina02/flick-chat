@@ -93,6 +93,12 @@ class MessageSerializer(serializers.ModelSerializer):
             return 0
         return obj.replies.filter(is_deleted=False).count()
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if data.get("card_data") is None:
+            data["card_data"] = {}
+        return data
+
 
 class ConversationMemberSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
