@@ -30,7 +30,7 @@ class MessageSerializer(serializers.ModelSerializer):
     attachment_url = serializers.SerializerMethodField()
     reactions = serializers.SerializerMethodField()
     reply_count = serializers.SerializerMethodField()
-    parent_id = serializers.IntegerField(source="parent_id", read_only=True, allow_null=True)
+    parent_id = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
         model = Message
