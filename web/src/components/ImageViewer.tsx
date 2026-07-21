@@ -94,30 +94,33 @@ export default function ImageViewer({ item, onClose, onReactionsUpdate }: ImageV
         />
       </div>
 
-      <div className="image-viewer-reactions" onClick={(e) => e.stopPropagation()}>
-        <ReactionBar
-          messageId={item.messageId}
-          reactions={reactions}
-          onUpdate={handleReactionsUpdate}
-        />
-        <ReactionPicker messageId={item.messageId} onUpdate={handleReactionsUpdate} className="viewer-picker" />
-      </div>
-
       <footer className="image-viewer-footer">
-        <button type="button" className="viewer-action" onClick={save} disabled={saving}>
-          <span className="viewer-action-icon">⬇</span>
-          Save to device
-        </button>
-        <a
-          className="viewer-action"
-          href={item.url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <span className="viewer-action-icon">↗</span>
-          Open original
-        </a>
+        <div className="viewer-reaction-strip" onClick={(e) => e.stopPropagation()}>
+          <ReactionBar
+            messageId={item.messageId}
+            reactions={reactions}
+            onUpdate={handleReactionsUpdate}
+          />
+          <ReactionPicker
+            messageId={item.messageId}
+            onUpdate={handleReactionsUpdate}
+            className="viewer-picker compact"
+          />
+        </div>
+        <div className="viewer-actions-row">
+          <button type="button" className="viewer-action compact" onClick={save} disabled={saving}>
+            {saved ? "Saved" : saving ? "…" : "Save"}
+          </button>
+          <a
+            className="viewer-action compact"
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Open
+          </a>
+        </div>
       </footer>
     </div>
   );

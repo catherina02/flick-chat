@@ -5,10 +5,11 @@ type ReactionBarProps = {
   messageId: number;
   reactions: ReactionSummary[];
   onUpdate: (reactions: ReactionSummary[]) => void;
+  className?: string;
 };
 
 /** Shows existing reaction counts only (picker is separate, on long-press). */
-export default function ReactionBar({ messageId, reactions, onUpdate }: ReactionBarProps) {
+export default function ReactionBar({ messageId, reactions, onUpdate, className = "" }: ReactionBarProps) {
   if (!reactions.length) return null;
 
   async function react(emoji: string) {
@@ -21,7 +22,7 @@ export default function ReactionBar({ messageId, reactions, onUpdate }: Reaction
   }
 
   return (
-    <div className="reaction-bar">
+    <div className={`reaction-bar ${className}`.trim()}>
       {reactions.map((r) => (
         <button
           key={r.emoji}

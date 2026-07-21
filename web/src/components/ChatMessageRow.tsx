@@ -97,7 +97,7 @@ export default function ChatMessageRow({
       ) : null}
       <div className={`bubble-row ${isMe ? "me" : ""} ${isGrouped ? "grouped" : ""}`}>
         <div
-          className={`bubble-wrap ${showAsImage ? "image-wrap" : ""} ${showPicker ? "picker-open" : ""}`}
+          className={`bubble-wrap ${showAsImage ? "image-wrap" : ""} ${showPicker ? "picker-open" : ""} ${(message.reactions?.length ?? 0) > 0 ? "has-reactions-spacer" : ""}`}
           onPointerDown={onPointerDown}
           onPointerUp={clearPress}
           onPointerLeave={clearPress}
@@ -121,9 +121,9 @@ export default function ChatMessageRow({
           ) : null}
 
           <div
-            className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""} ${message.is_deleted ? "deleted" : ""} ${message.is_urgent ? "urgent" : ""} ${message.is_pinned ? "pinned" : ""} ${showAsImage ? "image-bubble" : ""}`}
+            className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""} ${message.is_deleted ? "deleted" : ""} ${message.is_urgent ? "urgent" : ""} ${message.is_pinned ? "pinned" : ""} ${showAsImage ? "image-bubble" : ""} ${(message.reactions?.length ?? 0) > 0 ? "has-reactions" : ""}`}
           >
-            {message.is_pinned ? <span className="pin-indicator">📌</span> : null}
+            {message.is_pinned ? <span className="pin-indicator" title="Pinned">📌</span> : null}
             {message.is_urgent && !showAsImage ? <span className="urgent-badge">URGENT</span> : null}
             {message.message_type === "card" ? (
               <InteractiveCard
@@ -160,8 +160,9 @@ export default function ChatMessageRow({
             ) : null}
           </div>
 
-          {!message.is_deleted ? (
+          {!message.is_deleted && (message.reactions?.length ?? 0) > 0 ? (
             <ReactionBar
+              className={`bubble-reactions ${isMe ? "me" : ""}`}
               messageId={message.id}
               reactions={message.reactions ?? []}
               onUpdate={(reactions) => onReactionsUpdate(message.id, reactions)}
