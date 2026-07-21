@@ -414,6 +414,21 @@ class ConversationMediaListView(generics.ListAPIView):
 class ConversationDeleteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    def get(self, request, conversation_id):
+        membership = ConversationMember.objects.filter(
+            conversation_id=conversation_id,
+            user=request.user,
+        ).first()
+        if membership is None:
+            return Response({"detail": "Conversation not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        conversation = (
+            Conversation.objects.filter(id=conversation_id)
+            .prefetch_related("members__user__profile")
+            .first()
+        )
+        return Response(ConversationSerializer(conversation, context={"request": request}).data)
+
     def delete(self, request, conversation_id):
         membership = ConversationMember.objects.filter(
             conversation_id=conversation_id,

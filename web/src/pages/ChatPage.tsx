@@ -4,8 +4,8 @@ import {
   deleteConversation,
   deleteMessage,
   editMessage,
+  fetchConversation,
   fetchConversationMedia,
-  fetchConversations,
   fetchMe,
   fetchMessages,
   fetchThreadMessages,
@@ -13,6 +13,7 @@ import {
   messageAttachmentUrl,
   pinMessage,
   uploadFile,
+  isImageMessage,
 } from "../api";
 import type { ChatMessage, Conversation, User } from "../types";
 import { avatarColor, formatDateSeparator, formatMessageTime, initials, isSameDay } from "../utils/ui";
@@ -24,7 +25,10 @@ import InteractiveCard from "../components/InteractiveCard";
 import ChannelPanel from "../components/ChannelPanel";
 import ChatSettingsPanel from "../components/ChatSettingsPanel";
 import ChatToolsModal from "../components/ChatToolsModal";
+import GroupInfoPanel from "../components/GroupInfoPanel";
 import CatchUpBanner from "../components/CatchUpBanner";
+import ChatImageMessage from "../components/ChatImageMessage";
+import ImageViewer, { type ImageViewerItem } from "../components/ImageViewer";
 import {
   connectWebSocket,
   joinConversation,
@@ -114,12 +118,8 @@ function messageContent(message: ChatMessage) {
   }
 
   const url = resolveAttachmentUrl(message);
-  if (message.message_type === "image" && url) {
-    return (
-      <a href={url} target="_blank" rel="noreferrer">
-        <img src={url} alt={message.file_name || "Image"} className="chat-image" />
-      </a>
-    );
+  if (isImageMessage(message) && url) {
+    return null;
   }
 
   if (message.message_type === "file" && url) {
@@ -170,10 +170,12 @@ export default function ChatPage() {
   const [activeThread, setActiveThread] = useState<ChatMessage | null>(null);
   const [threadMessages, setThreadMessages] = useState<ChatMessage[]>([]);
   const [urgentMode, setUrgentMode] = useState(false);
+  const [groupInfoOpen, setGroupInfoOpen] = useState(false);
   const [channelPanelOpen, setChannelPanelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [catchUpDismissed, setCatchUpDismissed] = useState(false);
+  const [imageViewer, setImageViewer] = useState<ImageViewerItem | null>(null);
   const [msgMenu, setMsgMenu] = useState<{ messageId: number; x: number; y: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -183,10 +185,10 @@ export default function ChatPage() {
   useEffect(() => {
     setLoading(true);
     connectWebSocket();
-    Promise.all([fetchMe(), fetchConversations(), fetchMessages(conversationId)])
-      .then(async ([profile, conversations, initialMessages]) => {
+    Promise.all([fetchMe(), fetchConversation(conversationId), fetchMessages(conversationId)])
+      .then(async ([profile, chat, initialMessages]) => {
         setMe(profile);
-        setConversation(conversations.find((item: Conversation) => item.id === conversationId));
+        setConversation(chat);
         setMessages(initialMessages);
         joinConversation(conversationId);
         await markConversationRead(conversationId);
@@ -278,7 +280,14 @@ export default function ChatPage() {
 
   async function handleDeleteChat() {
     setMenuOpen(false);
-    if (!window.confirm("Delete this chat? It will be removed from your chat list.")) return;
+    setGroupInfoOpen(false);
+    const label =
+      conversation?.type === "group"
+        ? "Delete this group? It will be removed from your chat list."
+        : conversation?.type === "channel"
+          ? "Leave this channel? It will be removed from your chat list."
+          : "Delete this chat? It will be removed from your chat list.";
+    if (!window.confirm(label)) return;
     try {
       await deleteConversation(conversationId);
       navigate("/");
@@ -349,21 +358,48 @@ export default function ChatPage() {
     }
   }
 
+  function openImageViewer(message: ChatMessage) {
+    const url = resolveAttachmentUrl(message);
+    if (!url) return;
+    setImageViewer({
+      messageId: message.id,
+      url,
+      fileName: message.file_name || "photo.jpg",
+      senderName: message.sender.username,
+      createdAt: formatMessageTime(message.created_at),
+    });
+  }
+
   async function openThread(message: ChatMessage) {
     setActiveThread(message);
     const replies = await fetchThreadMessages(conversationId, message.id);
     setThreadMessages(replies);
   }
 
-  const chatTitle = titleFor(conversation);
+  const isGroup = conversation?.type === "group";
+  const isChannel = conversation?.type === "channel";
+  const isDirect = conversation?.type === "direct";
+  const chatTitle = conversation ? titleFor(conversation) : loading ? "…" : "Chat";
   const isAdmin = Boolean(
     conversation?.members.some((m) => m.user.id === me?.id && m.role === "admin") || false,
   );
-  const isChannel = conversation?.type === "channel";
   const avatarSeed =
-    conversation?.type === "group" || conversation?.type === "channel"
-      ? conversation.name || String(conversation.id)
+    isGroup || isChannel
+      ? conversation?.name || String(conversation?.id ?? conversationId)
       : conversation?.other_user?.username ?? chatTitle;
+
+  function openGroupInfo() {
+    if (!conversation) return;
+    if (isDirect) return;
+    setGroupInfoOpen(true);
+    setMenuOpen(false);
+  }
+
+  function openMediaFromMenu() {
+    setMenuOpen(false);
+    setGroupInfoOpen(false);
+    void openMediaPanel();
+  }
   const displayMessages = activeThread ? threadMessages : messages;
 
   const activeMenuMessage = msgMenu
@@ -376,33 +412,41 @@ export default function ChatPage() {
         <Link to="/" className="btn icon-btn ghost mobile-back" aria-label="Back to chats">
           <IconBack />
         </Link>
-        <div
-          className={`avatar sm ${conversation?.other_user?.is_online ? "" : "light-border"}`}
-          style={{ background: avatarColor(avatarSeed) }}
+        <button
+          type="button"
+          className={`chat-topbar-profile ${!isDirect ? "clickable" : ""}`}
+          onClick={openGroupInfo}
+          disabled={isDirect || !conversation}
         >
-          {initials(chatTitle)}
-          {conversation?.type === "direct" && conversation.other_user?.is_online ? (
-            <span className="online-dot" style={{ borderColor: "#f0f2f5" }} />
-          ) : null}
-        </div>
-        <div className="chat-topbar-info">
-          <h2>{chatTitle}</h2>
-          {typingUser ? (
-            <p className="typing">
-              {typingUser} is typing
-              <span className="typing-dots" aria-hidden>
-                <span /><span /><span />
-              </span>
-            </p>
-          ) : (
-            <p>{subtitleFor(conversation)}</p>
-          )}
-        </div>
+          <div
+            className={`avatar sm ${conversation?.other_user?.is_online ? "" : "light-border"}`}
+            style={{ background: avatarColor(avatarSeed) }}
+          >
+            {initials(chatTitle)}
+            {isDirect && conversation?.other_user?.is_online ? (
+              <span className="online-dot" style={{ borderColor: "#f0f2f5" }} />
+            ) : null}
+          </div>
+          <div className="chat-topbar-info">
+            <h2>{chatTitle}</h2>
+            {typingUser ? (
+              <p className="typing">
+                {typingUser} is typing
+                <span className="typing-dots" aria-hidden>
+                  <span /><span /><span />
+                </span>
+              </p>
+            ) : (
+              <p>{subtitleFor(conversation)}</p>
+            )}
+          </div>
+        </button>
         <div className="chat-topbar-menu" ref={menuRef}>
           <button
-            className="btn icon-btn ghost"
+            className="btn icon-btn ghost topbar-menu-btn"
             type="button"
             aria-label="Chat menu"
+            aria-expanded={menuOpen}
             onClick={(e) => {
               e.stopPropagation();
               setMenuOpen((v) => !v);
@@ -412,22 +456,31 @@ export default function ChatPage() {
           </button>
           {menuOpen ? (
             <div className="dropdown-menu">
-              <button type="button" onClick={openMediaPanel}>
-                Media, links & docs
+              <button type="button" onClick={openMediaFromMenu}>
+                View media
               </button>
+              {isGroup || isChannel ? (
+                <button type="button" onClick={openGroupInfo}>
+                  {isGroup ? "Group info" : "Channel info"}
+                </button>
+              ) : null}
               {isChannel ? (
                 <button type="button" onClick={() => { setMenuOpen(false); setChannelPanelOpen(true); }}>
                   Channel panel
                 </button>
               ) : null}
-              <button type="button" onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}>
-                Notifications & DND
-              </button>
-              <button type="button" onClick={() => { setMenuOpen(false); setToolsOpen(true); }}>
-                Polls, approvals & schedule
-              </button>
+              {!isGroup && !isChannel ? (
+                <>
+                  <button type="button" onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}>
+                    Notifications & DND
+                  </button>
+                  <button type="button" onClick={() => { setMenuOpen(false); setToolsOpen(true); }}>
+                    Polls & schedule
+                  </button>
+                </>
+              ) : null}
               <button type="button" className="danger" onClick={handleDeleteChat}>
-                Delete chat
+                {isGroup ? "Delete group" : isChannel ? "Leave channel" : "Delete chat"}
               </button>
             </div>
           ) : null}
@@ -489,6 +542,7 @@ export default function ChatPage() {
             const receipt = isMe && !message.is_deleted ? (isRead ? "✓✓" : "✓") : "";
             const showSender =
               !isMe && (conversation?.type === "group" || conversation?.type === "channel") && !isGrouped;
+            const showAsImage = !message.is_deleted && isImageMessage(message);
 
             return (
               <div key={message.id}>
@@ -498,12 +552,12 @@ export default function ChatPage() {
                   </div>
                 ) : null}
                 <div className={`bubble-row ${isMe ? "me" : ""} ${isGrouped ? "grouped" : ""}`}>
-                  <div className="bubble-wrap">
+                  <div className={`bubble-wrap ${showAsImage ? "image-wrap" : ""}`}>
                     {showSender ? (
                       <p className="sender-name">{message.sender.username}</p>
                     ) : null}
                     <div
-                      className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""} ${message.is_deleted ? "deleted" : ""} ${message.is_urgent ? "urgent" : ""}`}
+                      className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""} ${message.is_deleted ? "deleted" : ""} ${message.is_urgent ? "urgent" : ""} ${showAsImage ? "image-bubble" : ""}`}
                       onContextMenu={(e) => {
                         if (!isMe || message.is_deleted) return;
                         e.preventDefault();
@@ -513,7 +567,7 @@ export default function ChatPage() {
                         });
                       }}
                     >
-                      {message.is_urgent ? <span className="urgent-badge">URGENT</span> : null}
+                      {message.is_urgent && !showAsImage ? <span className="urgent-badge">URGENT</span> : null}
                       {message.message_type === "card" ? (
                         <InteractiveCard
                           message={message}
@@ -523,8 +577,16 @@ export default function ChatPage() {
                           }
                         />
                       ) : null}
-                      {messageContent(message)}
-                      {!message.is_deleted ? (
+                      {showAsImage ? (
+                        <ChatImageMessage
+                          message={message}
+                          receipt={receipt}
+                          onOpen={openImageViewer}
+                        />
+                      ) : (
+                        messageContent(message)
+                      )}
+                      {!message.is_deleted && !showAsImage ? (
                         <span className="bubble-meta">
                           {message.edited_at ? <span className="edited-label">edited </span> : null}
                           {formatMessageTime(message.created_at)}
@@ -609,6 +671,11 @@ export default function ChatPage() {
           <button type="button" className="danger" onClick={() => handleDeleteMessage(activeMenuMessage.id)}>
             Delete
           </button>
+          {isImageMessage(activeMenuMessage) ? (
+            <button type="button" onClick={() => { openImageViewer(activeMenuMessage); setMsgMenu(null); }}>
+              View photo
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -684,6 +751,16 @@ export default function ChatPage() {
         loading={mediaLoading}
       />
 
+      {groupInfoOpen && conversation && !isDirect ? (
+        <GroupInfoPanel
+          conversation={conversation}
+          me={me}
+          onClose={() => setGroupInfoOpen(false)}
+          onViewMedia={openMediaFromMenu}
+          onDeleteGroup={handleDeleteChat}
+        />
+      ) : null}
+
       {channelPanelOpen && isChannel ? (
         <ChannelPanel
           conversationId={conversationId}
@@ -707,6 +784,8 @@ export default function ChatPage() {
           onCreated={() => fetchMessages(conversationId).then(setMessages)}
         />
       ) : null}
+
+      <ImageViewer item={imageViewer} onClose={() => setImageViewer(null)} />
     </div>
   );
 }

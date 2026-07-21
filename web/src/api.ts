@@ -16,6 +16,38 @@ export function messageAttachmentUrl(messageId: number): string {
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
+/** Download attachment bytes and save to the user's device. */
+export async function downloadMessageAttachment(messageId: number, fileName: string) {
+  const url = messageAttachmentUrl(messageId);
+  const access = getAccessToken();
+  const headers: HeadersInit = {};
+  if (access) headers.Authorization = `Bearer ${access}`;
+
+  let response = await fetch(url, { headers });
+  if (response.status === 401 && access) {
+    const refreshed = await refreshAccessToken();
+    headers.Authorization = `Bearer ${refreshed}`;
+    response = await fetch(url, { headers });
+  }
+  if (!response.ok) throw new Error("Download failed");
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName || `flick-chat-${messageId}.jpg`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export function isImageMessage(message: { message_type: string; file_name?: string }) {
+  if (message.message_type === "image") return true;
+  const name = (message.file_name || "").toLowerCase();
+  return /\.(jpe?g|png|gif|webp|bmp|heic)$/.test(name);
+}
+
 export function getRefreshToken() {
   return localStorage.getItem(REFRESH_KEY);
 }
@@ -136,6 +168,11 @@ export async function fetchUsers() {
 
 export async function fetchConversations() {
   const response = await authorizedFetch("/api/v1/chat/conversations/");
+  return response.json();
+}
+
+export async function fetchConversation(conversationId: number) {
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/`);
   return response.json();
 }
 
