@@ -8,6 +8,7 @@ from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -17,20 +18,26 @@ from apps.accounts.serializers import UserSerializer
 
 from .authentication import QueryParamJWTAuthentication
 from .message_serializers import MessageEditSerializer
-from .models import Conversation, ConversationMember, Message, MessageRead, Notification
-from .realtime import broadcast_conversation_created
+from .models import ChannelResource, Conversation, ConversationMember, Message, MessageReaction, MessageRead, Notification
+from .permissions import can_moderate_message, can_post_message, require_admin
+from .realtime import broadcast_conversation_created, broadcast_to_conversation
 from .serializers import (
+    ChannelCreateSerializer,
+    ChannelResourceSerializer,
     ConversationSerializer,
     DirectConversationCreateSerializer,
     GroupConversationCreateSerializer,
     MessageSerializer,
     NotificationSerializer,
+    ReactionToggleSerializer,
 )
 from .services import (
     broadcast_conversation_deleted,
     broadcast_message,
     broadcast_message_deleted,
     broadcast_message_updated,
+    broadcast_reaction_updated,
+    message_event_payload,
     notify_group_created,
 )
 
@@ -50,6 +57,11 @@ ALLOWED_CONTENT_TYPES = {
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/octet-stream",
+    "audio/webm",
+    "audio/ogg",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/wav",
 }
 ALLOWED_EXTENSIONS = {
     ".jpg",
@@ -62,6 +74,11 @@ ALLOWED_EXTENSIONS = {
     ".zip",
     ".doc",
     ".docx",
+    ".webm",
+    ".ogg",
+    ".mp3",
+    ".m4a",
+    ".wav",
 }
 
 
@@ -86,6 +103,8 @@ def _detect_message_type(uploaded_file) -> str:
     content_type = _normalize_content_type(uploaded_file)
     if content_type.startswith("image/"):
         return Message.IMAGE
+    if content_type.startswith("audio/"):
+        return Message.AUDIO
     return Message.FILE
 
 
@@ -183,8 +202,15 @@ class GroupConversationCreateView(APIView):
         )
 
         members = [
-            ConversationMember(conversation=conversation, user=request.user),
-            *[ConversationMember(conversation=conversation, user_id=user_id) for user_id in member_ids],
+            ConversationMember(
+                conversation=conversation,
+                user=request.user,
+                role=ConversationMember.ADMIN,
+            ),
+            *[
+                ConversationMember(conversation=conversation, user_id=user_id)
+                for user_id in member_ids
+            ],
         ]
         ConversationMember.objects.bulk_create(members)
 
@@ -213,10 +239,17 @@ class MessageListView(generics.ListAPIView):
             user=self.request.user,
         ).exists():
             return Message.objects.none()
+
+        thread_id = self.request.query_params.get("thread")
+        qs = Message.objects.filter(conversation_id=conversation_id)
+        if thread_id:
+            qs = qs.filter(parent_id=thread_id)
+        else:
+            qs = qs.filter(parent__isnull=True)
+
         return (
-            Message.objects.filter(conversation_id=conversation_id)
-            .select_related("sender", "sender__profile")
-            .prefetch_related("reads")
+            qs.select_related("sender", "sender__profile", "parent")
+            .prefetch_related("reads", "reactions", "reactions__user")
             .order_by("created_at")
         )
 
@@ -226,11 +259,15 @@ class MessageUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request, conversation_id):
-        if not ConversationMember.objects.filter(
+        membership = ConversationMember.objects.filter(
             conversation_id=conversation_id,
             user=request.user,
-        ).exists():
+        ).first()
+        if membership is None:
             return Response({"detail": "Conversation not found."}, status=status.HTTP_404_NOT_FOUND)
+        conversation = get_object_or_404(Conversation, id=conversation_id)
+        if not can_post_message(conversation, membership):
+            return Response({"detail": "This channel is read-only."}, status=status.HTTP_403_FORBIDDEN)
 
         uploaded_file = request.FILES.get("file")
         if uploaded_file is None:
@@ -243,6 +280,7 @@ class MessageUploadView(APIView):
             return Response({"detail": "File type not allowed."}, status=status.HTTP_400_BAD_REQUEST)
 
         caption = (request.data.get("body") or "").strip()
+        transcript = (request.data.get("transcript") or "").strip()
         message_type = _detect_message_type(uploaded_file)
         content_type = _normalize_content_type(uploaded_file)
         file_bytes = uploaded_file.read()
@@ -252,6 +290,7 @@ class MessageUploadView(APIView):
             sender=request.user,
             message_type=message_type,
             body=caption,
+            transcript=transcript,
             attachment_data=file_bytes,
             content_type=content_type,
             file_name=os.path.basename(uploaded_file.name),
@@ -329,9 +368,13 @@ class MessageDeleteView(APIView):
 
     def delete(self, request, message_id):
         message = get_object_or_404(Message, id=message_id)
-        if not _is_conversation_member(request.user, message.conversation_id):
+        membership = ConversationMember.objects.filter(
+            conversation_id=message.conversation_id,
+            user=request.user,
+        ).first()
+        if membership is None:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        if message.sender_id != request.user.id:
+        if not can_moderate_message(request.user, membership, message):
             return Response({"detail": "You can only delete your own messages."}, status=status.HTTP_403_FORBIDDEN)
         if message.is_deleted:
             return Response(MessageSerializer(message, context={"request": request}).data)
@@ -361,7 +404,7 @@ class ConversationMediaListView(generics.ListAPIView):
             Message.objects.filter(
                 conversation_id=conversation_id,
                 is_deleted=False,
-                message_type__in=[Message.IMAGE, Message.FILE],
+                message_type__in=[Message.IMAGE, Message.FILE, Message.AUDIO],
             )
             .select_related("sender", "sender__profile")
             .order_by("-created_at")
@@ -447,4 +490,152 @@ class NotificationMarkAllReadView(APIView):
     def post(self, request):
         Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ChannelCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChannelCreateSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        member_ids = serializer.validated_data.get("member_ids", [])
+        conversation = Conversation.objects.create(
+            type=Conversation.CHANNEL,
+            name=serializer.validated_data["name"],
+            description=serializer.validated_data.get("description", ""),
+            is_public=serializer.validated_data.get("is_public", False),
+        )
+        members = [
+            ConversationMember(
+                conversation=conversation,
+                user=request.user,
+                role=ConversationMember.ADMIN,
+            ),
+            *[ConversationMember(conversation=conversation, user_id=uid) for uid in member_ids],
+        ]
+        ConversationMember.objects.bulk_create(members)
+        conversation = Conversation.objects.filter(id=conversation.id).prefetch_related(
+            "members__user__profile"
+        ).first()
+        data = ConversationSerializer(conversation, context={"request": request}).data
+        broadcast_conversation_created([request.user.id, *member_ids], data)
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+class PublicChannelListView(generics.ListAPIView):
+    serializer_class = ConversationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        joined_ids = ConversationMember.objects.filter(user=self.request.user).values_list(
+            "conversation_id", flat=True
+        )
+        return (
+            Conversation.objects.filter(type=Conversation.CHANNEL, is_public=True)
+            .exclude(id__in=joined_ids)
+            .prefetch_related("members__user__profile")
+            .order_by("name")
+        )
+
+
+class ChannelJoinView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, conversation_id):
+        conversation = get_object_or_404(Conversation, id=conversation_id, type=Conversation.CHANNEL)
+        if not conversation.is_public:
+            return Response({"detail": "Private channel."}, status=status.HTTP_403_FORBIDDEN)
+        ConversationMember.objects.get_or_create(
+            conversation=conversation,
+            user=request.user,
+            defaults={"role": ConversationMember.MEMBER},
+        )
+        data = ConversationSerializer(conversation, context={"request": request}).data
+        return Response(data)
+
+
+class MessageReactionToggleView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, message_id):
+        message = get_object_or_404(Message, id=message_id)
+        if not _is_conversation_member(request.user, message.conversation_id):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ReactionToggleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        emoji = serializer.validated_data["emoji"]
+        existing = MessageReaction.objects.filter(message=message, user=request.user, emoji=emoji).first()
+        if existing:
+            existing.delete()
+        else:
+            MessageReaction.objects.create(message=message, user=request.user, emoji=emoji)
+        message = Message.objects.filter(id=message.id).prefetch_related("reactions", "reactions__user").first()
+        broadcast_reaction_updated(message, request=request)
+        return Response(MessageSerializer(message, context={"request": request}).data)
+
+
+class MessagePinView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, message_id):
+        message = get_object_or_404(Message, id=message_id)
+        membership = ConversationMember.objects.filter(
+            conversation_id=message.conversation_id,
+            user=request.user,
+        ).first()
+        if membership is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if membership.role != ConversationMember.ADMIN and message.sender_id != request.user.id:
+            return Response({"detail": "Only admins can pin messages."}, status=status.HTTP_403_FORBIDDEN)
+        message.is_pinned = not message.is_pinned
+        message.save(update_fields=["is_pinned"])
+        payload = message_event_payload(message, "message.updated", request=request)
+        broadcast_to_conversation(message.conversation_id, payload)
+        return Response(MessageSerializer(message, context={"request": request}).data)
+
+
+class MessageSearchView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        query = (request.query_params.get("q") or "").strip()
+        if len(query) < 2:
+            return Response([])
+        conversation_ids = ConversationMember.objects.filter(user=request.user).values_list(
+            "conversation_id", flat=True
+        )
+        messages = (
+            Message.objects.filter(
+                conversation_id__in=conversation_ids,
+                is_deleted=False,
+                body__icontains=query,
+            )
+            .select_related("sender", "conversation")
+            .order_by("-created_at")[:40]
+        )
+        results = []
+        for message in messages:
+            data = MessageSerializer(message, context={"request": request}).data
+            data["conversation_name"] = message.conversation.name or "Chat"
+            results.append(data)
+        return Response(results)
+
+
+class ChannelResourceListCreateView(generics.ListCreateAPIView):
+    serializer_class = ChannelResourceSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        conversation_id = self.kwargs["conversation_id"]
+        if not _is_conversation_member(self.request.user, conversation_id):
+            return ChannelResource.objects.none()
+        return ChannelResource.objects.filter(conversation_id=conversation_id).select_related(
+            "created_by", "created_by__profile"
+        )
+
+    def perform_create(self, serializer):
+        conversation_id = self.kwargs["conversation_id"]
+        if not _is_conversation_member(self.request.user, conversation_id):
+            raise PermissionDenied()
+        serializer.save(conversation_id=conversation_id, created_by=self.request.user)
 

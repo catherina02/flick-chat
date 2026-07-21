@@ -155,6 +155,96 @@ export async function createGroupChat(name: string, memberIds: number[]) {
   return response.json();
 }
 
+export async function createChannel(
+  name: string,
+  description: string,
+  isPublic: boolean,
+  memberIds: number[] = [],
+) {
+  const response = await authorizedFetch("/api/v1/chat/conversations/channel/", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      description,
+      is_public: isPublic,
+      member_ids: memberIds,
+    }),
+  });
+  return response.json();
+}
+
+export async function fetchPublicChannels() {
+  const response = await authorizedFetch("/api/v1/chat/channels/public/");
+  return response.json();
+}
+
+export async function joinChannel(conversationId: number) {
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/join/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return response.json();
+}
+
+export async function searchMessages(query: string) {
+  const response = await authorizedFetch(
+    `/api/v1/chat/search/?q=${encodeURIComponent(query)}`,
+  );
+  return response.json();
+}
+
+export async function updateStatus(data: {
+  presence_status?: string;
+  status_message?: string;
+}) {
+  const response = await authorizedFetch("/api/v1/auth/status/", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function toggleReaction(messageId: number, emoji: string) {
+  const response = await authorizedFetch(`/api/v1/chat/messages/${messageId}/reactions/`, {
+    method: "POST",
+    body: JSON.stringify({ emoji }),
+  });
+  return response.json();
+}
+
+export async function pinMessage(messageId: number) {
+  const response = await authorizedFetch(`/api/v1/chat/messages/${messageId}/pin/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return response.json();
+}
+
+export async function fetchThreadMessages(conversationId: number, threadId: number) {
+  const response = await authorizedFetch(
+    `/api/v1/chat/conversations/${conversationId}/messages/?thread=${threadId}`,
+  );
+  return response.json();
+}
+
+export async function fetchChannelResources(conversationId: number) {
+  const response = await authorizedFetch(
+    `/api/v1/chat/conversations/${conversationId}/resources/`,
+  );
+  return response.json();
+}
+
+export async function addChannelResource(
+  conversationId: number,
+  data: { title: string; url?: string; body?: string },
+) {
+  const response = await authorizedFetch(
+    `/api/v1/chat/conversations/${conversationId}/resources/`,
+    { method: "POST", body: JSON.stringify(data) },
+  );
+  return response.json();
+}
+
 export async function fetchMessages(conversationId: number) {
   const response = await authorizedFetch(
     `/api/v1/chat/conversations/${conversationId}/messages/`,
@@ -259,6 +349,134 @@ export async function registerDeviceToken(token: string, platform = "web") {
     method: "POST",
     body: JSON.stringify({ token, platform }),
   });
+}
+
+export async function fetchNotificationPrefs() {
+  const response = await authorizedFetch("/api/v1/chat/preferences/notifications/");
+  return response.json();
+}
+
+export async function updateNotificationPrefs(data: Record<string, unknown>) {
+  const response = await authorizedFetch("/api/v1/chat/preferences/notifications/", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function fetchConversationSettings(conversationId: number) {
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/settings/`);
+  return response.json();
+}
+
+export async function updateConversationSettings(conversationId: number, data: Record<string, unknown>) {
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/settings/`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function fetchCatchUp(conversationId: number, since?: string) {
+  const qs = since ? `?since=${encodeURIComponent(since)}` : "";
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/catchup/${qs}`);
+  return response.json();
+}
+
+export async function createPoll(conversationId: number, question: string, options: string[]) {
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/cards/`, {
+    method: "POST",
+    body: JSON.stringify({ card_type: "poll", card_data: { question, options } }),
+  });
+  return response.json();
+}
+
+export async function createApproval(conversationId: number, title: string, required = 1) {
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/cards/`, {
+    method: "POST",
+    body: JSON.stringify({ card_type: "approval", card_data: { title, required } }),
+  });
+  return response.json();
+}
+
+export async function cardAction(messageId: number, data: Record<string, unknown>) {
+  const response = await authorizedFetch(`/api/v1/chat/messages/${messageId}/card-action/`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function scheduleMessage(
+  conversationId: number,
+  body: string,
+  scheduledAt: string,
+  isUrgent = false,
+) {
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/scheduled/`, {
+    method: "POST",
+    body: JSON.stringify({ body, scheduled_at: scheduledAt, is_urgent: isUrgent }),
+  });
+  return response.json();
+}
+
+export async function fetchScheduledMessages(conversationId: number) {
+  const response = await authorizedFetch(`/api/v1/chat/conversations/${conversationId}/scheduled/`);
+  return response.json();
+}
+
+export async function deleteScheduledMessage(scheduledId: number) {
+  await authorizedFetch(`/api/v1/chat/scheduled/${scheduledId}/`, {
+    method: "DELETE",
+  });
+}
+
+export async function moderateDeleteMessage(messageId: number) {
+  const response = await authorizedFetch(`/api/v1/chat/messages/${messageId}/moderate/`, {
+    method: "DELETE",
+  });
+  return response.json();
+}
+
+export async function fetchWebhooks() {
+  const response = await authorizedFetch("/api/v1/chat/webhooks/");
+  return response.json();
+}
+
+export async function createWebhook(data: Record<string, unknown>) {
+  const response = await authorizedFetch("/api/v1/chat/webhooks/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return response.json();
+}
+
+export async function deleteWebhook(webhookId: number) {
+  await authorizedFetch(`/api/v1/chat/webhooks/${webhookId}/`, { method: "DELETE" });
+}
+
+export async function loginWithGoogle(idToken: string) {
+  const response = await fetch(`${API_BASE}/api/v1/auth/sso/google/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id_token: idToken }),
+  });
+  if (!response.ok) throw new Error("Google sign-in failed");
+  const data = await response.json();
+  setTokens({ access: data.access, refresh: data.refresh });
+  return data.user;
+}
+
+export async function loginWithAzure(accessToken: string) {
+  const response = await fetch(`${API_BASE}/api/v1/auth/sso/azure/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ access_token: accessToken }),
+  });
+  if (!response.ok) throw new Error("Azure sign-in failed");
+  const data = await response.json();
+  setTokens({ access: data.access, refresh: data.refresh });
+  return data.user;
 }
 
 export function getWsUrl() {

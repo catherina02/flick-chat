@@ -6,7 +6,7 @@ from django.utils import timezone as django_timezone
 
 from apps.accounts.models import Profile
 from apps.chat.models import ConversationMember, Message, MessageRead
-from apps.chat.services import broadcast_message, message_payload
+from apps.chat.services import broadcast_message, message_event_payload
 
 
 @database_sync_to_async
@@ -41,11 +41,21 @@ def create_message(
     username: str,
     conversation_id: int,
     body: str,
+    parent_id: int | None = None,
+    is_urgent: bool = False,
 ) -> dict | None:
-    if not ConversationMember.objects.filter(
+    from apps.chat.models import Conversation
+    from apps.chat.permissions import can_post_message
+
+    membership = ConversationMember.objects.filter(
         user_id=user_id,
         conversation_id=conversation_id,
-    ).exists():
+    ).first()
+    if membership is None:
+        return None
+
+    conversation = Conversation.objects.filter(id=conversation_id).first()
+    if conversation is None or not can_post_message(conversation, membership):
         return None
 
     message = Message.objects.create(
@@ -53,11 +63,13 @@ def create_message(
         sender_id=user_id,
         body=body,
         message_type=Message.TEXT,
+        parent_id=parent_id,
+        is_urgent=is_urgent,
     )
     message.conversation.save(update_fields=["updated_at"])
 
     broadcast_message(message)
-    return message_payload(message)
+    return message_event_payload(message)
 
 
 @database_sync_to_async
@@ -171,6 +183,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if event_type == "message.send":
             conversation_id = payload.get("conversation_id")
             body = (payload.get("body") or "").strip()
+            parent_id = payload.get("parent_id")
+            is_urgent = bool(payload.get("is_urgent"))
             if not conversation_id or not body:
                 return
 
@@ -179,6 +193,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.user.username,
                 conversation_id,
                 body,
+                parent_id=parent_id,
+                is_urgent=is_urgent,
             )
             return
 

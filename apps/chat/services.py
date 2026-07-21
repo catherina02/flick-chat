@@ -1,9 +1,11 @@
 from django.contrib.auth import get_user_model
 
 from apps.chat.models import ConversationMember, Message, Notification
+from apps.chat.notification_policy import should_notify_user
 from apps.chat.push import send_push_to_user
 from apps.chat.realtime import broadcast_notification, broadcast_to_conversation, broadcast_to_user
 from apps.chat.serializers import MessageSerializer, NotificationSerializer
+from apps.chat.webhooks import dispatch_outgoing_webhooks
 
 User = get_user_model()
 
@@ -35,6 +37,18 @@ def notify_new_message(message: Message, request=None) -> None:
     title = _conversation_title(conversation, message.sender)
 
     for user_id in member_ids:
+        member = ConversationMember.objects.filter(conversation=conversation, user_id=user_id).first()
+        user = User.objects.select_related("profile").filter(id=user_id).first()
+        if user is None:
+            continue
+        if not should_notify_user(
+            user=user,
+            conversation=conversation,
+            message=message,
+            membership=member,
+        ):
+            continue
+
         notification = Notification.objects.create(
             user_id=user_id,
             notification_type=Notification.MESSAGE,
@@ -84,6 +98,7 @@ def broadcast_message(message: Message, request=None) -> None:
     payload = message_event_payload(message, request=request)
     broadcast_to_conversation(message.conversation_id, payload)
     notify_new_message(message, request=request)
+    dispatch_outgoing_webhooks(message)
 
 
 def broadcast_message_updated(message: Message, request=None) -> None:
@@ -93,6 +108,11 @@ def broadcast_message_updated(message: Message, request=None) -> None:
 
 def broadcast_message_deleted(message: Message, request=None) -> None:
     payload = message_payload(message, "message.deleted", request=request)
+    broadcast_to_conversation(message.conversation_id, payload)
+
+
+def broadcast_reaction_updated(message: Message, request=None) -> None:
+    payload = message_payload(message, "message.updated", request=request)
     broadcast_to_conversation(message.conversation_id, payload)
 
 
@@ -112,7 +132,11 @@ def _conversation_title(conversation, sender) -> str:
 def _attachment_preview(message: Message) -> str:
     if message.message_type == Message.IMAGE:
         return "Sent an image"
+    if message.message_type == Message.AUDIO:
+        return "Sent a voice note"
     if message.message_type == Message.FILE:
         return f"Sent {message.file_name or 'a file'}"
+    if message.message_type == Message.CARD:
+        return f"Sent a {message.card_type or 'card'}"
     return "Sent a message"
 

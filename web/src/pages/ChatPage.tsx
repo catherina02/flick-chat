@@ -8,14 +8,23 @@ import {
   fetchConversations,
   fetchMe,
   fetchMessages,
+  fetchThreadMessages,
   markConversationRead,
   messageAttachmentUrl,
+  pinMessage,
   uploadFile,
 } from "../api";
 import type { ChatMessage, Conversation, User } from "../types";
 import { avatarColor, formatDateSeparator, formatMessageTime, initials, isSameDay } from "../utils/ui";
+import { renderMarkdown } from "../utils/markdown";
 import { IconAttach, IconBack, IconSend } from "../components/Icons";
 import MediaPanel from "../components/MediaPanel";
+import ReactionBar from "../components/ReactionBar";
+import InteractiveCard from "../components/InteractiveCard";
+import ChannelPanel from "../components/ChannelPanel";
+import ChatSettingsPanel from "../components/ChatSettingsPanel";
+import ChatToolsModal from "../components/ChatToolsModal";
+import CatchUpBanner from "../components/CatchUpBanner";
 import {
   connectWebSocket,
   joinConversation,
@@ -27,17 +36,30 @@ import {
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
+function clampMenuPosition(x: number, y: number) {
+  const menuWidth = 168;
+  const menuHeight = 96;
+  const margin = 8;
+  const maxX = window.innerWidth - menuWidth - margin;
+  const maxY = window.innerHeight - menuHeight - margin;
+  return {
+    x: Math.max(margin, Math.min(x, maxX)),
+    y: Math.max(margin, Math.min(y, maxY)),
+  };
+}
+
 function titleFor(conversation: Conversation | undefined) {
   if (!conversation) return "Chat";
+  if (conversation.type === "channel") return `#${conversation.name || "channel"}`;
   if (conversation.type === "group") return conversation.name || "Group Chat";
   return conversation.other_user?.username ?? "Chat";
 }
 
 function subtitleFor(conversation: Conversation | undefined) {
   if (!conversation) return "";
-  if (conversation.type === "group") {
+  if (conversation.type === "group" || conversation.type === "channel") {
     const count = conversation.members.length;
-    return `${count} member${count === 1 ? "" : "s"}`;
+    return `${count} member${count === 1 ? "" : "s"}${conversation.is_locked ? " · locked" : ""}`;
   }
   if (conversation.other_user?.is_online) return "online";
   return "last seen recently";
@@ -58,11 +80,14 @@ function wsMessageFromEvent(event: Record<string, unknown>, conversationId: numb
   return {
     id: event.id as number,
     conversation: conversationId,
+    parent_id: (event.parent_id as number | null) ?? null,
     sender: {
       id: event.sender_id as number,
       username: (event.sender as string) ?? "",
       email: "",
       is_online: true,
+      presence_status: "online",
+      status_message: "",
     },
     message_type: (event.message_type as ChatMessage["message_type"]) ?? "text",
     body: (event.body as string) ?? "",
@@ -70,9 +95,16 @@ function wsMessageFromEvent(event: Record<string, unknown>, conversationId: numb
     file_name: (event.file_name as string) ?? "",
     file_size: (event.file_size as number) ?? 0,
     is_deleted: Boolean(event.is_deleted),
+    is_pinned: Boolean(event.is_pinned),
+    is_urgent: Boolean(event.is_urgent),
+    card_type: (event.card_type as ChatMessage["card_type"]) ?? "",
+    card_data: (event.card_data as ChatMessage["card_data"]) ?? {},
+    transcript: (event.transcript as string) ?? "",
     edited_at: (event.edited_at as string | null) ?? null,
     created_at: (event.created_at as string) ?? new Date().toISOString(),
     read_by: (event.read_by as number[]) ?? [],
+    reactions: (event.reactions as ChatMessage["reactions"]) ?? [],
+    reply_count: (event.reply_count as number) ?? 0,
   };
 }
 
@@ -98,7 +130,25 @@ function messageContent(message: ChatMessage) {
     );
   }
 
-  return <span className="bubble-text">{message.body}</span>;
+  if (message.message_type === "audio" && url) {
+    return (
+      <div className="audio-message">
+        <audio controls src={url} preload="none" />
+        {message.transcript ? <p className="meta transcript">{message.transcript}</p> : null}
+      </div>
+    );
+  }
+
+  if (message.message_type === "card") {
+    return null;
+  }
+
+  return (
+    <span
+      className="bubble-text markdown-body"
+      dangerouslySetInnerHTML={{ __html: renderMarkdown(message.body) }}
+    />
+  );
 }
 
 export default function ChatPage() {
@@ -117,6 +167,13 @@ export default function ChatPage() {
   const [mediaItems, setMediaItems] = useState<ChatMessage[]>([]);
   const [mediaLoading, setMediaLoading] = useState(false);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [activeThread, setActiveThread] = useState<ChatMessage | null>(null);
+  const [threadMessages, setThreadMessages] = useState<ChatMessage[]>([]);
+  const [urgentMode, setUrgentMode] = useState(false);
+  const [channelPanelOpen, setChannelPanelOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [catchUpDismissed, setCatchUpDismissed] = useState(false);
   const [msgMenu, setMsgMenu] = useState<{ messageId: number; x: number; y: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -270,8 +327,12 @@ export default function ChatPage() {
     }
 
     sendTyping(conversationId, false);
-    sendChatMessage(conversationId, body);
+    sendChatMessage(conversationId, body, {
+      parentId: activeThread?.id,
+      urgent: urgentMode,
+    });
     setText("");
+    setUrgentMode(false);
   }
 
   async function onFileSelected(event: React.ChangeEvent<HTMLInputElement>) {
@@ -288,11 +349,22 @@ export default function ChatPage() {
     }
   }
 
+  async function openThread(message: ChatMessage) {
+    setActiveThread(message);
+    const replies = await fetchThreadMessages(conversationId, message.id);
+    setThreadMessages(replies);
+  }
+
   const chatTitle = titleFor(conversation);
+  const isAdmin = Boolean(
+    conversation?.members.some((m) => m.user.id === me?.id && m.role === "admin") || false,
+  );
+  const isChannel = conversation?.type === "channel";
   const avatarSeed =
-    conversation?.type === "group"
+    conversation?.type === "group" || conversation?.type === "channel"
       ? conversation.name || String(conversation.id)
       : conversation?.other_user?.username ?? chatTitle;
+  const displayMessages = activeThread ? threadMessages : messages;
 
   const activeMenuMessage = msgMenu
     ? messages.find((m) => m.id === msgMenu.messageId)
@@ -343,6 +415,17 @@ export default function ChatPage() {
               <button type="button" onClick={openMediaPanel}>
                 Media, links & docs
               </button>
+              {isChannel ? (
+                <button type="button" onClick={() => { setMenuOpen(false); setChannelPanelOpen(true); }}>
+                  Channel panel
+                </button>
+              ) : null}
+              <button type="button" onClick={() => { setMenuOpen(false); setSettingsOpen(true); }}>
+                Notifications & DND
+              </button>
+              <button type="button" onClick={() => { setMenuOpen(false); setToolsOpen(true); }}>
+                Polls, approvals & schedule
+              </button>
               <button type="button" className="danger" onClick={handleDeleteChat}>
                 Delete chat
               </button>
@@ -351,25 +434,44 @@ export default function ChatPage() {
         </div>
       </div>
 
+      {activeThread ? (
+        <div className="thread-banner">
+          <span>Thread: {activeThread.body.slice(0, 60)}</span>
+          <button type="button" className="btn ghost" onClick={() => setActiveThread(null)}>
+            Close
+          </button>
+        </div>
+      ) : null}
+
+      {!activeThread && !catchUpDismissed ? (
+        <CatchUpBanner conversationId={conversationId} onDismiss={() => setCatchUpDismissed(true)} />
+      ) : null}
+
+      {!activeThread && messages.some((m) => m.is_pinned) ? (
+        <div className="pinned-banner">
+          📌 {messages.find((m) => m.is_pinned)?.body.slice(0, 80)}
+        </div>
+      ) : null}
+
       <div className="messages">
         {loading ? (
           <div className="loading-messages">
             <div className="spinner" />
             <p className="meta">Loading messages...</p>
           </div>
-        ) : messages.length === 0 ? (
+        ) : displayMessages.length === 0 ? (
           <div className="empty-state fade-in">
             <div className="empty-state-icon">
               <IconSend size={28} />
             </div>
-            <h2>No messages yet</h2>
-            <p>Say hello and start the conversation!</p>
+            <h2>{activeThread ? "No replies yet" : "No messages yet"}</h2>
+            <p>{activeThread ? "Start the thread!" : "Say hello and start the conversation!"}</p>
           </div>
         ) : (
-          messages.map((message, index) => {
+          displayMessages.map((message, index) => {
             const isMe = message.sender.id === me?.id;
-            const prev = messages[index - 1];
-            const next = messages[index + 1];
+            const prev = displayMessages[index - 1];
+            const next = displayMessages[index + 1];
             const showDate = !prev || !isSameDay(prev.created_at, message.created_at);
             const isGrouped =
               prev &&
@@ -385,7 +487,8 @@ export default function ChatPage() {
               !message.is_deleted;
             const isRead = isMe && message.read_by.length >= expectedReaders;
             const receipt = isMe && !message.is_deleted ? (isRead ? "✓✓" : "✓") : "";
-            const showSender = !isMe && conversation?.type === "group" && !isGrouped;
+            const showSender =
+              !isMe && (conversation?.type === "group" || conversation?.type === "channel") && !isGrouped;
 
             return (
               <div key={message.id}>
@@ -400,13 +503,26 @@ export default function ChatPage() {
                       <p className="sender-name">{message.sender.username}</p>
                     ) : null}
                     <div
-                      className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""} ${message.is_deleted ? "deleted" : ""}`}
+                      className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""} ${message.is_deleted ? "deleted" : ""} ${message.is_urgent ? "urgent" : ""}`}
                       onContextMenu={(e) => {
                         if (!isMe || message.is_deleted) return;
                         e.preventDefault();
-                        setMsgMenu({ messageId: message.id, x: e.clientX, y: e.clientY });
+                        setMsgMenu({
+                          messageId: message.id,
+                          ...clampMenuPosition(e.clientX, e.clientY),
+                        });
                       }}
                     >
+                      {message.is_urgent ? <span className="urgent-badge">URGENT</span> : null}
+                      {message.message_type === "card" ? (
+                        <InteractiveCard
+                          message={message}
+                          meId={me?.id}
+                          onUpdated={(updated) =>
+                            setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+                          }
+                        />
+                      ) : null}
                       {messageContent(message)}
                       {!message.is_deleted ? (
                         <span className="bubble-meta">
@@ -423,13 +539,37 @@ export default function ChatPage() {
                           onClick={(e) => {
                             e.stopPropagation();
                             const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-                            setMsgMenu({ messageId: message.id, x: rect.left, y: rect.bottom + 4 });
+                            setMsgMenu({
+                              messageId: message.id,
+                              ...clampMenuPosition(rect.left, rect.bottom + 4),
+                            });
                           }}
                         >
                           ▾
                         </button>
                       ) : null}
                     </div>
+                    {!message.is_deleted ? (
+                      <ReactionBar
+                        messageId={message.id}
+                        reactions={message.reactions ?? []}
+                        onUpdate={(reactions) =>
+                          setMessages((prev) =>
+                            prev.map((m) => (m.id === message.id ? { ...m, reactions } : m)),
+                          )
+                        }
+                      />
+                    ) : null}
+                    {!activeThread && !message.is_deleted && message.reply_count > 0 ? (
+                      <button type="button" className="thread-link" onClick={() => openThread(message)}>
+                        {message.reply_count} repl{message.reply_count === 1 ? "y" : "ies"}
+                      </button>
+                    ) : null}
+                    {!activeThread && !message.is_deleted ? (
+                      <button type="button" className="thread-link subtle" onClick={() => openThread(message)}>
+                        Reply in thread
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -451,6 +591,21 @@ export default function ChatPage() {
               Edit
             </button>
           ) : null}
+          {!activeThread ? (
+            <button type="button" onClick={() => { openThread(activeMenuMessage); setMsgMenu(null); }}>
+              Reply in thread
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={async () => {
+              const updated = await pinMessage(activeMenuMessage.id);
+              setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+              setMsgMenu(null);
+            }}
+          >
+            {activeMenuMessage.is_pinned ? "Unpin" : "Pin message"}
+          </button>
           <button type="button" className="danger" onClick={() => handleDeleteMessage(activeMenuMessage.id)}>
             Delete
           </button>
@@ -471,7 +626,7 @@ export default function ChatPage() {
           ref={fileInputRef}
           type="file"
           hidden
-          accept="image/*,.pdf,.txt,.zip,.doc,.docx"
+          accept="image/*,.pdf,.txt,.zip,.doc,.docx,audio/*"
           onChange={onFileSelected}
         />
         {!editingMessage ? (
@@ -496,10 +651,22 @@ export default function ChatPage() {
                 sendTyping(conversationId, e.target.value.trim().length > 0);
               }
             }}
-            placeholder={editingMessage ? "Edit your message" : "Type a message"}
+            placeholder={
+              editingMessage ? "Edit your message" : activeThread ? "Reply in thread" : "Type a message"
+            }
             disabled={loading}
           />
         </div>
+        {!editingMessage ? (
+          <button
+            type="button"
+            className={`urgent-toggle ${urgentMode ? "active" : ""}`}
+            onClick={() => setUrgentMode((v) => !v)}
+            title="Mark as urgent"
+          >
+            !
+          </button>
+        ) : null}
         <button
           className="send-btn"
           type="submit"
@@ -516,6 +683,30 @@ export default function ChatPage() {
         items={mediaItems}
         loading={mediaLoading}
       />
+
+      {channelPanelOpen && isChannel ? (
+        <ChannelPanel
+          conversationId={conversationId}
+          isAdmin={isAdmin}
+          onClose={() => setChannelPanelOpen(false)}
+        />
+      ) : null}
+
+      {settingsOpen ? (
+        <ChatSettingsPanel
+          conversationId={conversationId}
+          isAdmin={isAdmin}
+          onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
+
+      {toolsOpen ? (
+        <ChatToolsModal
+          conversationId={conversationId}
+          onClose={() => setToolsOpen(false)}
+          onCreated={() => fetchMessages(conversationId).then(setMessages)}
+        />
+      ) : null}
     </div>
   );
 }

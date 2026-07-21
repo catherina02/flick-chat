@@ -62,14 +62,32 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     is_online = serializers.SerializerMethodField()
+    presence_status = serializers.SerializerMethodField()
+    status_message = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ("id", "username", "email", "is_online")
+        fields = ("id", "username", "email", "is_online", "presence_status", "status_message")
 
     def get_is_online(self, obj):
         profile = getattr(obj, "profile", None)
         return profile.is_online if profile else False
+
+    def get_presence_status(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.presence_status if profile else "online"
+
+    def get_status_message(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.status_message if profile else ""
+
+
+class StatusUpdateSerializer(serializers.Serializer):
+    presence_status = serializers.ChoiceField(
+        choices=["online", "away", "busy", "ooo"],
+        required=False,
+    )
+    status_message = serializers.CharField(max_length=120, required=False, allow_blank=True)
 
 
 class ProfileSerializer(serializers.ModelSerializer):

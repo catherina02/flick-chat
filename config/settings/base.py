@@ -133,6 +133,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 FCM_SERVER_KEY = env("FCM_SERVER_KEY", default="")
 SITE_URL = env("SITE_URL", default="http://127.0.0.1:8000")
+GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", default="")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

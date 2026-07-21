@@ -3,6 +3,8 @@ import MessengerLayout, { ChatEmptyState } from "./components/MessengerLayout";
 import LoginPage from "./pages/LoginPage";
 import ChatPage from "./pages/ChatPage";
 import CreateGroupPage from "./pages/CreateGroupPage";
+import CreateChannelPage from "./pages/CreateChannelPage";
+import WebhooksPage from "./pages/WebhooksPage";
 import { getAccessToken } from "./api";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -17,6 +19,22 @@ export default function App() {
     <div className="app-shell">
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/create-channel"
+          element={
+            <RequireAuth>
+              <CreateChannelPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/webhooks"
+          element={
+            <RequireAuth>
+              <WebhooksPage />
+            </RequireAuth>
+          }
+        />
         <Route
           path="/create-group"
           element={

@@ -116,6 +116,50 @@ export default function LoginPage() {
 
         {mode === "login" ? (
           <>
+            <div className="divider">corporate SSO</div>
+            <div className="sso-box">
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={loading}
+                onClick={() => {
+                  const token = window.prompt("Paste Google ID token (from Google Workspace OAuth):");
+                  if (!token) return;
+                  setLoading(true);
+                  import("../api").then(({ loginWithGoogle }) =>
+                    loginWithGoogle(token)
+                      .then(() => navigate("/"))
+                      .catch((err) => setError(err.message))
+                      .finally(() => setLoading(false)),
+                  );
+                }}
+              >
+                Sign in with Google
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={loading}
+                onClick={() => {
+                  const token = window.prompt("Paste Azure AD access token:");
+                  if (!token) return;
+                  setLoading(true);
+                  import("../api").then(({ loginWithAzure }) =>
+                    loginWithAzure(token)
+                      .then(() => navigate("/"))
+                      .catch((err) => setError(err.message))
+                      .finally(() => setLoading(false)),
+                  );
+                }}
+              >
+                Sign in with Microsoft
+              </button>
+            </div>
+          </>
+        ) : null}
+
+        {mode === "login" ? (
+          <>
             <div className="divider">or try a demo</div>
             <div className="demo-box">
               <p>Quick login — no signup needed</p>

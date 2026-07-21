@@ -5,15 +5,19 @@ import {
   fetchConversations,
   fetchMe,
   fetchNotifications,
+  fetchPublicChannels,
   fetchUnreadNotificationCount,
   fetchUsers,
+  joinChannel,
   logout,
   markAllNotificationsRead,
   markNotificationRead,
+  searchMessages,
 } from "../api";
 import type { AppNotification, ChatMessage, Conversation, User } from "../types";
 import { avatarColor, formatListTime, initials } from "../utils/ui";
 import { connectWebSocket, disconnectWebSocket, joinConversation, subscribe } from "../ws";
+import StatusPicker from "./StatusPicker";
 import {
   IconBell,
   IconChat,
@@ -25,6 +29,7 @@ import {
 } from "./Icons";
 
 function titleFor(conversation: Conversation) {
+  if (conversation.type === "channel") return `#${conversation.name || "channel"}`;
   if (conversation.type === "group") return conversation.name || "Group Chat";
   return conversation.other_user?.username ?? "Chat";
 }
@@ -89,6 +94,9 @@ export default function MessengerLayout() {
   const [showNew, setShowNew] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [search, setSearch] = useState("");
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<ChatMessage[]>([]);
+  const [publicChannels, setPublicChannels] = useState<Conversation[]>([]);
 
   const filteredConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -98,12 +106,19 @@ export default function MessengerLayout() {
 
   useEffect(() => {
     connectWebSocket();
-    Promise.all([fetchMe(), fetchConversations(), fetchUsers(), fetchUnreadNotificationCount()])
-      .then(([profile, chats, allUsers, unread]) => {
+    Promise.all([
+      fetchMe(),
+      fetchConversations(),
+      fetchUsers(),
+      fetchUnreadNotificationCount(),
+      fetchPublicChannels().catch(() => []),
+    ])
+      .then(([profile, chats, allUsers, unread, pubChannels]) => {
         setMe(profile);
         setConversations(chats);
         setUsers(allUsers);
         setUnreadCount(unread.count);
+        setPublicChannels(pubChannels);
         chats.forEach((c: Conversation) => joinConversation(c.id));
       })
       .catch((err) => setError(err.message))
@@ -133,6 +148,8 @@ export default function MessengerLayout() {
               username: (event.sender as string) ?? "",
               email: "",
               is_online: true,
+              presence_status: "online",
+              status_message: "",
             },
             message_type: (event.message_type as ChatMessage["message_type"]) ?? "text",
             body: (event.body as string) ?? "",
@@ -140,11 +157,16 @@ export default function MessengerLayout() {
             file_name: (event.file_name as string) ?? "",
             file_size: (event.file_size as number) ?? 0,
             is_deleted: Boolean(event.is_deleted),
+            is_pinned: Boolean(event.is_pinned),
+            is_urgent: Boolean(event.is_urgent),
             edited_at: (event.edited_at as string | null) ?? null,
+            parent_id: (event.parent_id as number | null) ?? null,
+            reactions: (event.reactions as ChatMessage["reactions"]) ?? [],
+            reply_count: (event.reply_count as number) ?? 0,
             created_at: (event.created_at as string) ?? new Date().toISOString(),
             read_by: (event.read_by as number[]) ?? [],
           };
-          updated.updated_at = updated.last_message.created_at;
+          updated.updated_at = updated.last_message?.created_at ?? new Date().toISOString();
           const rest = prev.filter((item) => item.id !== conversationId);
           return [updated, ...rest];
         });
@@ -205,6 +227,23 @@ export default function MessengerLayout() {
     setNotifications(items);
   }
 
+  async function runGlobalSearch(query: string) {
+    setGlobalSearch(query);
+    if (query.trim().length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    const results = await searchMessages(query);
+    setSearchResults(results);
+  }
+
+  async function handleJoinChannel(channelId: number) {
+    const conversation = await joinChannel(channelId);
+    setPublicChannels((prev) => prev.filter((c) => c.id !== channelId));
+    setConversations((prev) => [conversation, ...prev]);
+    navigate(`/chat/${channelId}`);
+  }
+
   async function startDirect(userId: number) {
     const conversation = await createDirectChat(userId);
     setShowNew(false);
@@ -225,7 +264,12 @@ export default function MessengerLayout() {
             )}
             <div>
               <h1>Chats</h1>
-              {me ? <p className="sidebar-subtitle">{me.username}</p> : null}
+              {me ? (
+                <div className="sidebar-status-row">
+                  <p className="sidebar-subtitle">{me.username}</p>
+                  <StatusPicker me={me} onUpdate={setMe} />
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="sidebar-actions">
@@ -252,6 +296,12 @@ export default function MessengerLayout() {
             <Link className="btn icon-btn ghost" to="/create-group" title="New group">
               <IconUsers />
             </Link>
+            <Link className="btn icon-btn ghost" to="/create-channel" title="New channel">
+              #
+            </Link>
+            <Link className="btn icon-btn ghost" to="/webhooks" title="Webhooks">
+              ↗
+            </Link>
             <button
               className="btn icon-btn ghost"
               type="button"
@@ -271,12 +321,80 @@ export default function MessengerLayout() {
             <span className="search-icon"><IconSearch size={16} /></span>
             <input
               type="search"
-              placeholder="Search or start new chat"
+              placeholder="Search chats"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+          <div className="search-box global-search">
+            <span className="search-icon"><IconSearch size={16} /></span>
+            <input
+              type="search"
+              placeholder="Search all messages"
+              value={globalSearch}
+              onChange={(e) => void runGlobalSearch(e.target.value)}
+            />
+          </div>
         </div>
+
+        {searchResults.length > 0 ? (
+          <div className="search-results-panel">
+            <div className="panel-header">
+              <h3>Search results</h3>
+              <button
+                className="btn ghost"
+                type="button"
+                style={{ fontSize: "0.8125rem", padding: "6px 10px" }}
+                onClick={() => {
+                  setGlobalSearch("");
+                  setSearchResults([]);
+                }}
+              >
+                Clear
+              </button>
+            </div>
+            <div className="search-results-list">
+              {searchResults.map((message) => (
+                <button
+                  key={message.id}
+                  type="button"
+                  className="search-result-item"
+                  onClick={() => {
+                    if (message.conversation) {
+                      navigate(`/chat/${message.conversation}`);
+                      setSearchResults([]);
+                      setGlobalSearch("");
+                    }
+                  }}
+                >
+                  <strong>{message.sender.username}</strong>
+                  <div className="meta">{message.body}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {publicChannels.length > 0 ? (
+          <div className="public-channels-panel">
+            <div className="panel-header">
+              <h3>Public channels</h3>
+            </div>
+            <div className="public-channels-list">
+              {publicChannels.map((channel) => (
+                <button
+                  key={channel.id}
+                  type="button"
+                  className="public-channel-item"
+                  onClick={() => void handleJoinChannel(channel.id)}
+                >
+                  <span className="channel-hash">#</span>
+                  <span>{channel.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {error ? <div className="error" style={{ margin: "0 14px 10px" }}>{error}</div> : null}
 
@@ -378,6 +496,7 @@ export default function MessengerLayout() {
               const isOnline =
                 conversation.type === "direct" && conversation.other_user?.is_online;
               const isGroup = conversation.type === "group";
+              const isChannel = conversation.type === "channel";
               return (
                 <Link
                   key={conversation.id}
@@ -394,6 +513,9 @@ export default function MessengerLayout() {
                         {titleFor(conversation)}
                         {isGroup ? (
                           <span className="group-badge"><IconGroup /></span>
+                        ) : null}
+                        {isChannel ? (
+                          <span className="channel-badge">channel</span>
                         ) : null}
                       </strong>
                       <span className="conversation-time">
