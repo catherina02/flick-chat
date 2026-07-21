@@ -38,6 +38,7 @@ from .services import (
     broadcast_message_updated,
     broadcast_reaction_updated,
     message_event_payload,
+    message_payload,
     notify_group_created,
 )
 
@@ -600,11 +601,9 @@ class MessagePinView(APIView):
         ).first()
         if membership is None:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        if membership.role != ConversationMember.ADMIN and message.sender_id != request.user.id:
-            return Response({"detail": "Only admins can pin messages."}, status=status.HTTP_403_FORBIDDEN)
         message.is_pinned = not message.is_pinned
         message.save(update_fields=["is_pinned"])
-        payload = message_event_payload(message, "message.updated", request=request)
+        payload = message_payload(message, "message.updated", request=request)
         broadcast_to_conversation(message.conversation_id, payload)
         return Response(MessageSerializer(message, context={"request": request}).data)
 

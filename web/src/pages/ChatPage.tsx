@@ -16,18 +16,16 @@ import {
   isImageMessage,
 } from "../api";
 import type { ChatMessage, Conversation, User } from "../types";
-import { avatarColor, formatDateSeparator, formatMessageTime, initials, isSameDay } from "../utils/ui";
+import { avatarColor, formatMessageTime, initials } from "../utils/ui";
 import { renderMarkdown } from "../utils/markdown";
 import { IconAttach, IconBack, IconSend } from "../components/Icons";
 import MediaPanel from "../components/MediaPanel";
-import ReactionBar from "../components/ReactionBar";
-import InteractiveCard from "../components/InteractiveCard";
+import ChatMessageRow from "../components/ChatMessageRow";
 import ChannelPanel from "../components/ChannelPanel";
 import ChatSettingsPanel from "../components/ChatSettingsPanel";
 import ChatToolsModal from "../components/ChatToolsModal";
 import GroupInfoPanel from "../components/GroupInfoPanel";
 import CatchUpBanner from "../components/CatchUpBanner";
-import ChatImageMessage from "../components/ChatImageMessage";
 import ImageViewer, { type ImageViewerItem } from "../components/ImageViewer";
 import {
   connectWebSocket,
@@ -175,6 +173,7 @@ export default function ChatPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [catchUpDismissed, setCatchUpDismissed] = useState(false);
+  const [reactionPickerId, setReactionPickerId] = useState<number | null>(null);
   const [imageViewer, setImageViewer] = useState<ImageViewerItem | null>(null);
   const [msgMenu, setMsgMenu] = useState<{ messageId: number; x: number; y: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -240,12 +239,25 @@ export default function ChatPage() {
   }, [conversationId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, typingUser]);
+    if (reactionPickerId === null) return;
+    function close(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (target.closest(".reaction-picker-float") || target.closest(".bubble-wrap.picker-open")) {
+        return;
+      }
+      setReactionPickerId(null);
+    }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [reactionPickerId]);
 
   useEffect(() => {
     if (!loading && !editingMessage) inputRef.current?.focus();
   }, [loading, conversationId, editingMessage]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, typingUser]);
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -367,7 +379,14 @@ export default function ChatPage() {
       fileName: message.file_name || "photo.jpg",
       senderName: message.sender.username,
       createdAt: formatMessageTime(message.created_at),
+      reactions: message.reactions ?? [],
     });
+    setReactionPickerId(null);
+  }
+
+  function openMessageMenu(message: ChatMessage, x: number, y: number) {
+    setReactionPickerId(null);
+    setMsgMenu({ messageId: message.id, ...clampMenuPosition(x, y) });
   }
 
   async function openThread(message: ChatMessage) {
@@ -521,122 +540,33 @@ export default function ChatPage() {
             <p>{activeThread ? "Start the thread!" : "Say hello and start the conversation!"}</p>
           </div>
         ) : (
-          displayMessages.map((message, index) => {
-            const isMe = message.sender.id === me?.id;
-            const prev = displayMessages[index - 1];
-            const next = displayMessages[index + 1];
-            const showDate = !prev || !isSameDay(prev.created_at, message.created_at);
-            const isGrouped =
-              prev &&
-              prev.sender.id === message.sender.id &&
-              isSameDay(prev.created_at, message.created_at) &&
-              !prev.is_deleted &&
-              !message.is_deleted;
-            const nextGrouped =
-              next &&
-              next.sender.id === message.sender.id &&
-              isSameDay(next.created_at, message.created_at) &&
-              !next.is_deleted &&
-              !message.is_deleted;
-            const isRead = isMe && message.read_by.length >= expectedReaders;
-            const receipt = isMe && !message.is_deleted ? (isRead ? "✓✓" : "✓") : "";
-            const showSender =
-              !isMe && (conversation?.type === "group" || conversation?.type === "channel") && !isGrouped;
-            const showAsImage = !message.is_deleted && isImageMessage(message);
-
-            return (
-              <div key={message.id}>
-                {showDate ? (
-                  <div className="date-separator">
-                    <span>{formatDateSeparator(message.created_at)}</span>
-                  </div>
-                ) : null}
-                <div className={`bubble-row ${isMe ? "me" : ""} ${isGrouped ? "grouped" : ""}`}>
-                  <div className={`bubble-wrap ${showAsImage ? "image-wrap" : ""}`}>
-                    {showSender ? (
-                      <p className="sender-name">{message.sender.username}</p>
-                    ) : null}
-                    <div
-                      className={`bubble ${isMe ? "me" : ""} ${isGrouped || nextGrouped ? "grouped-bubble" : ""} ${message.is_deleted ? "deleted" : ""} ${message.is_urgent ? "urgent" : ""} ${showAsImage ? "image-bubble" : ""}`}
-                      onContextMenu={(e) => {
-                        if (!isMe || message.is_deleted) return;
-                        e.preventDefault();
-                        setMsgMenu({
-                          messageId: message.id,
-                          ...clampMenuPosition(e.clientX, e.clientY),
-                        });
-                      }}
-                    >
-                      {message.is_urgent && !showAsImage ? <span className="urgent-badge">URGENT</span> : null}
-                      {message.message_type === "card" ? (
-                        <InteractiveCard
-                          message={message}
-                          meId={me?.id}
-                          onUpdated={(updated) =>
-                            setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
-                          }
-                        />
-                      ) : null}
-                      {showAsImage ? (
-                        <ChatImageMessage
-                          message={message}
-                          receipt={receipt}
-                          onOpen={openImageViewer}
-                        />
-                      ) : (
-                        messageContent(message)
-                      )}
-                      {!message.is_deleted && !showAsImage ? (
-                        <span className="bubble-meta">
-                          {message.edited_at ? <span className="edited-label">edited </span> : null}
-                          {formatMessageTime(message.created_at)}
-                          {receipt ? <span className="receipt">{receipt}</span> : null}
-                        </span>
-                      ) : null}
-                      {isMe && !message.is_deleted ? (
-                        <button
-                          type="button"
-                          className="bubble-menu-btn"
-                          aria-label="Message options"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-                            setMsgMenu({
-                              messageId: message.id,
-                              ...clampMenuPosition(rect.left, rect.bottom + 4),
-                            });
-                          }}
-                        >
-                          ▾
-                        </button>
-                      ) : null}
-                    </div>
-                    {!message.is_deleted ? (
-                      <ReactionBar
-                        messageId={message.id}
-                        reactions={message.reactions ?? []}
-                        onUpdate={(reactions) =>
-                          setMessages((prev) =>
-                            prev.map((m) => (m.id === message.id ? { ...m, reactions } : m)),
-                          )
-                        }
-                      />
-                    ) : null}
-                    {!activeThread && !message.is_deleted && message.reply_count > 0 ? (
-                      <button type="button" className="thread-link" onClick={() => openThread(message)}>
-                        {message.reply_count} repl{message.reply_count === 1 ? "y" : "ies"}
-                      </button>
-                    ) : null}
-                    {!activeThread && !message.is_deleted ? (
-                      <button type="button" className="thread-link subtle" onClick={() => openThread(message)}>
-                        Reply in thread
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            );
-          })
+          displayMessages.map((message, index) => (
+            <ChatMessageRow
+              key={message.id}
+              message={message}
+              index={index}
+              displayMessages={displayMessages}
+              conversation={conversation}
+              me={me}
+              activeThread={Boolean(activeThread)}
+              expectedReaders={expectedReaders}
+              reactionPickerId={reactionPickerId}
+              onOpenReactionPicker={setReactionPickerId}
+              onCloseReactionPicker={() => setReactionPickerId(null)}
+              onReactionsUpdate={(messageId, reactions) =>
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === messageId ? { ...m, reactions } : m)),
+                )
+              }
+              onMessageUpdated={(updated) =>
+                setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+              }
+              onOpenImage={openImageViewer}
+              onOpenThread={openThread}
+              onContextMenu={openMessageMenu}
+              renderContent={messageContent}
+            />
+          ))
         )}
         <div ref={bottomRef} />
       </div>
@@ -668,9 +598,11 @@ export default function ChatPage() {
           >
             {activeMenuMessage.is_pinned ? "Unpin" : "Pin message"}
           </button>
-          <button type="button" className="danger" onClick={() => handleDeleteMessage(activeMenuMessage.id)}>
-            Delete
-          </button>
+          {activeMenuMessage.sender.id === me?.id ? (
+            <button type="button" className="danger" onClick={() => handleDeleteMessage(activeMenuMessage.id)}>
+              Delete
+            </button>
+          ) : null}
           {isImageMessage(activeMenuMessage) ? (
             <button type="button" onClick={() => { openImageViewer(activeMenuMessage); setMsgMenu(null); }}>
               View photo
@@ -785,7 +717,13 @@ export default function ChatPage() {
         />
       ) : null}
 
-      <ImageViewer item={imageViewer} onClose={() => setImageViewer(null)} />
+      <ImageViewer
+        item={imageViewer}
+        onClose={() => setImageViewer(null)}
+        onReactionsUpdate={(messageId, reactions) =>
+          setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, reactions } : m)))
+        }
+      />
     </div>
   );
 }

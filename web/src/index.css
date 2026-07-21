@@ -1562,6 +1562,73 @@ a { color: inherit; text-decoration: none; }
 }
 .reaction-add:hover { opacity: 1; }
 
+.reaction-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: #fff;
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  border: 1px solid var(--border);
+}
+.reaction-picker-btn {
+  border: none;
+  background: transparent;
+  font-size: 1.375rem;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: transform 0.1s, background 0.1s;
+}
+.reaction-picker-btn:hover {
+  background: #f0f2f5;
+  transform: scale(1.15);
+}
+.reaction-picker-float {
+  position: absolute;
+  top: -48px;
+  right: 0;
+  z-index: 20;
+}
+.bubble-row:not(.me) .reaction-picker-float {
+  left: 0;
+  right: auto;
+}
+.bubble-wrap.picker-open {
+  position: relative;
+  z-index: 15;
+}
+.image-viewer-reactions {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+.image-viewer-reactions .reaction-picker.viewer-picker {
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.image-viewer-reactions .reaction-picker-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+.pin-indicator {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-size: 0.75rem;
+  line-height: 1;
+  opacity: 0.85;
+}
+.bubble.pinned {
+  border: 1px solid #fde68a;
+}
+
 .thread-banner,
 .pinned-banner,
 .edit-banner,

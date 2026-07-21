@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { downloadMessageAttachment } from "../api";
+import type { ReactionSummary } from "../types";
 import { IconBack } from "./Icons";
+import ReactionPicker from "./ReactionPicker";
+import ReactionBar from "./ReactionBar";
 
 export type ImageViewerItem = {
   messageId: number;
@@ -8,22 +11,26 @@ export type ImageViewerItem = {
   fileName: string;
   senderName?: string;
   createdAt?: string;
+  reactions?: ReactionSummary[];
 };
 
 type ImageViewerProps = {
   item: ImageViewerItem | null;
   onClose: () => void;
+  onReactionsUpdate?: (messageId: number, reactions: ReactionSummary[]) => void;
 };
 
-export default function ImageViewer({ item, onClose }: ImageViewerProps) {
+export default function ImageViewer({ item, onClose, onReactionsUpdate }: ImageViewerProps) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [scale, setScale] = useState(1);
+  const [reactions, setReactions] = useState<ReactionSummary[]>([]);
 
   useEffect(() => {
     if (!item) return;
     setSaved(false);
     setScale(1);
+    setReactions(item.reactions ?? []);
     document.body.style.overflow = "hidden";
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -48,6 +55,11 @@ export default function ImageViewer({ item, onClose }: ImageViewerProps) {
     }
   }, [item, saving]);
 
+  function handleReactionsUpdate(next: ReactionSummary[]) {
+    setReactions(next);
+    if (item) onReactionsUpdate?.(item.messageId, next);
+  }
+
   if (!item) return null;
 
   return (
@@ -62,12 +74,7 @@ export default function ImageViewer({ item, onClose }: ImageViewerProps) {
           {item.senderName ? <strong>{item.senderName}</strong> : null}
           {item.createdAt ? <span>{item.createdAt}</span> : null}
         </div>
-        <button
-          type="button"
-          className="viewer-save-btn"
-          onClick={save}
-          disabled={saving}
-        >
+        <button type="button" className="viewer-save-btn" onClick={save} disabled={saving}>
           {saved ? "Saved" : saving ? "Saving…" : "Save"}
         </button>
       </header>
@@ -85,6 +92,15 @@ export default function ImageViewer({ item, onClose }: ImageViewerProps) {
           onClick={(e) => e.stopPropagation()}
           draggable={false}
         />
+      </div>
+
+      <div className="image-viewer-reactions" onClick={(e) => e.stopPropagation()}>
+        <ReactionBar
+          messageId={item.messageId}
+          reactions={reactions}
+          onUpdate={handleReactionsUpdate}
+        />
+        <ReactionPicker messageId={item.messageId} onUpdate={handleReactionsUpdate} className="viewer-picker" />
       </div>
 
       <footer className="image-viewer-footer">
